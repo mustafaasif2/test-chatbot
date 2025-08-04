@@ -1,13 +1,23 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useChat } from "@ai-sdk/react";
 import {
   DefaultChatTransport,
-  TextStreamChatTransport,
   isToolUIPart,
   getToolName,
   lastAssistantMessageIsCompleteWithToolCalls,
 } from "ai";
-import { Send, Wifi, WifiOff, Clock, Cloud, Mail } from "lucide-react";
+import { Send, Wifi, WifiOff, Clock, Cloud, Mail, Book } from "lucide-react";
+
+// commercetools UIKit imports
+import Card from "@commercetools-uikit/card";
+import PrimaryButton from "@commercetools-uikit/primary-button";
+import SecondaryButton from "@commercetools-uikit/secondary-button";
+import TextInput from "@commercetools-uikit/text-input";
+import Text from "@commercetools-uikit/text";
+import Spacings from "@commercetools-uikit/spacings";
+
+import LoadingSpinner from "@commercetools-uikit/loading-spinner";
+import Constraints from "@commercetools-uikit/constraints";
 
 const APPROVAL = {
   YES: "Yes, confirmed.",
@@ -15,27 +25,34 @@ const APPROVAL = {
 };
 
 // Tools that require human confirmation
-const TOOLS_REQUIRING_CONFIRMATION = [
-  "getWeatherInformation",
-  "sendEmail",
-  "getLocalTime",
-];
+const TOOLS_REQUIRING_CONFIRMATION = ["getWeatherInformation", "sendEmail"];
+
+// Get API URL from environment or default
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:3001";
 
 function App() {
-  const [protocol, setProtocol] = useState("data-stream"); // 'text-stream' or 'data-stream'
   const [serverStatus, setServerStatus] = useState("connecting");
   const [input, setInput] = useState("");
+  const messagesEndRef = useRef(null);
 
-  // Create transport based on selected protocol
-  const transport =
-    protocol === "text-stream"
-      ? new TextStreamChatTransport({ api: "/api/chat/text-stream" })
-      : new DefaultChatTransport({ api: "/api/chat/data-stream" });
+  // Use only data stream transport
+  const transport = new DefaultChatTransport({
+    api: `${API_URL}/api/chat/data-stream`,
+  });
 
   const { messages, sendMessage, addToolResult, isLoading } = useChat({
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
   });
+
+  // Auto-scroll to bottom when messages change
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
   const getToolIcon = (toolName) => {
     switch (toolName) {
@@ -45,6 +62,8 @@ function App() {
         return <Mail size={16} />;
       case "getLocalTime":
         return <Clock size={16} />;
+      case "commercetoolsDocumentation":
+        return <Book size={16} />;
       default:
         return null;
     }
@@ -54,7 +73,7 @@ function App() {
   useEffect(() => {
     const checkServerStatus = async () => {
       try {
-        const response = await fetch("/api/health");
+        const response = await fetch(`${API_URL}/api/health`);
         if (response.ok) {
           setServerStatus("connected");
         } else {
@@ -85,6 +104,8 @@ function App() {
     if (input.trim() && !isLoading) {
       sendMessage({ text: input });
       setInput("");
+      // Scroll to bottom immediately after sending
+      setTimeout(scrollToBottom, 100);
     }
   };
 
@@ -123,15 +144,35 @@ function App() {
     "What's the weather like in New York?",
     "Get the current time in London",
     "Send an email to john@example.com with subject 'Meeting' and body 'Let's meet tomorrow'",
-    "What's the weather in Tokyo and what time is it there?",
+    "How do I work with product variants in commercetools?",
+    "Show me commercetools GraphQL setup documentation",
+    "What are the cart API endpoints in commercetools?",
   ];
 
-  const renderMessagePart = (part, messageId, partIndex) => {
+  const getToolDisplayName = (toolName) => {
+    switch (toolName) {
+      case "getWeatherInformation":
+        return "Weather Request";
+      case "getLocalTime":
+        return "Time Request";
+      case "commercetoolsDocumentation":
+        return "Commercetools Documentation";
+      case "sendEmail":
+        return "Email Request";
+      default:
+        return toolName;
+    }
+  };
+
+  const renderMessagePart = (part, messageId, partIndex, messageRole) => {
     if (part.type === "text") {
       return (
-        <div key={`${messageId}-${partIndex}`} className="message-content">
+        <Text.Body
+          key={`${messageId}-${partIndex}`}
+          tone={messageRole === "user" ? "inverted" : "primary"}
+        >
           {part.text}
-        </div>
+        </Text.Body>
       );
     }
 
@@ -145,54 +186,65 @@ function App() {
         part.state === "input-available"
       ) {
         return (
-          <div key={toolCallId} className="tool-call">
-            <div className="tool-call-header">
-              {getToolIcon(toolName)}
-              {toolName === "getWeatherInformation"
-                ? "Weather Request"
-                : toolName === "getLocalTime"
-                ? "Time Request"
-                : "Email Request"}
-            </div>
-            <div className="tool-call-input">
-              {JSON.stringify(part.input, null, 2)}
-            </div>
-            <div className="tool-call-actions">
-              <button
-                className="btn btn-confirm"
-                onClick={() =>
-                  handleToolConfirmation(toolCallId, toolName, true)
-                }
-              >
-                Confirm
-              </button>
-              <button
-                className="btn btn-deny"
-                onClick={() =>
-                  handleToolConfirmation(toolCallId, toolName, false)
-                }
-              >
-                Deny
-              </button>
-            </div>
-          </div>
+          <Card key={toolCallId} theme="info" type="raised">
+            <Spacings.Stack scale="s">
+              <Spacings.Inline scale="xs" alignItems="center">
+                {getToolIcon(toolName)}
+                <Text.Subheadline as="h4" tone="primary">
+                  {getToolDisplayName(toolName)}
+                </Text.Subheadline>
+              </Spacings.Inline>
+              <Text.Caption tone="secondary">
+                Requires your confirmation:
+              </Text.Caption>
+              <Card theme="light" type="flat">
+                <Text.Detail>{JSON.stringify(part.input, null, 2)}</Text.Detail>
+              </Card>
+              <Spacings.Inline scale="s" justifyContent="flex-end">
+                <SecondaryButton
+                  label="Deny"
+                  onClick={() =>
+                    handleToolConfirmation(toolCallId, toolName, false)
+                  }
+                  size="medium"
+                  tone="critical"
+                />
+                <PrimaryButton
+                  label="Confirm"
+                  onClick={() =>
+                    handleToolConfirmation(toolCallId, toolName, true)
+                  }
+                  size="medium"
+                />
+              </Spacings.Inline>
+            </Spacings.Stack>
+          </Card>
         );
       }
 
-      // Render tool result
+      // Render tool result (hidden for documentation tool since AI will summarize)
       if (part.state === "output-available") {
+        // Hide documentation tool output since AI will provide summary
+        if (toolName === "commercetoolsDocumentation") {
+          return (
+            <Text.Caption key={toolCallId} tone="secondary">
+              📚 Retrieved commercetools documentation
+            </Text.Caption>
+          );
+        }
+
         return (
-          <div key={toolCallId} className="tool-call">
-            <div className="tool-call-header">
-              {getToolIcon(toolName)}
-              {toolName === "getWeatherInformation"
-                ? "Weather Result"
-                : toolName === "getLocalTime"
-                ? "Time Result"
-                : "Email Result"}
-            </div>
-            <div className="tool-call-input">{part.output}</div>
-          </div>
+          <Card key={toolCallId} theme="light" type="raised">
+            <Spacings.Stack scale="xs">
+              <Spacings.Inline scale="xs" alignItems="center">
+                {getToolIcon(toolName)}
+                <Text.Caption tone="secondary">
+                  {getToolDisplayName(toolName)}
+                </Text.Caption>
+              </Spacings.Inline>
+              <Text.Body>{part.output}</Text.Body>
+            </Spacings.Stack>
+          </Card>
         );
       }
     }
@@ -202,116 +254,141 @@ function App() {
 
   return (
     <div className="chat-container">
-      <div className="chat-header">
-        <h1>AI SDK Streaming Demo</h1>
-        <p>Experience text streaming and human-in-the-loop with AI tools</p>
-      </div>
+      {/* Header with Server Status and Examples */}
+      <Card theme="light" type="raised">
+        <Spacings.Stack scale="s">
+          <Spacings.Inline
+            scale="m"
+            justifyContent="space-between"
+            alignItems="flex-start"
+          >
+            <Spacings.Stack scale="xs">
+              <Text.Headline as="h1">
+                AI Assistant with Commercetools
+              </Text.Headline>
+            </Spacings.Stack>
+            <div className={`status-indicator status-${serverStatus}`}>
+              <Spacings.Inline scale="xs" alignItems="center">
+                {getStatusIcon()}
+                <Text.Detail>{getStatusText()}</Text.Detail>
+              </Spacings.Inline>
+            </div>
+          </Spacings.Inline>
 
-      {/* Server Status */}
-      <div className={`status-indicator status-${serverStatus}`}>
-        {getStatusIcon()} {getStatusText()}
-      </div>
-
-      {/* Protocol Selector */}
-      <div className="protocol-selector">
-        <button
-          className={`protocol-btn ${
-            protocol === "text-stream" ? "active" : ""
-          }`}
-          onClick={() => setProtocol("text-stream")}
-        >
-          Text Stream Protocol
-        </button>
-        <button
-          className={`protocol-btn ${
-            protocol === "data-stream" ? "active" : ""
-          }`}
-          onClick={() => setProtocol("data-stream")}
-        >
-          Data Stream Protocol (HITL)
-        </button>
-      </div>
-
-      {/* Example Prompts */}
-      <div className="example-prompts">
-        <h3>Try these examples:</h3>
-        <div className="prompt-suggestions">
-          {examplePrompts.map((prompt, index) => (
-            <button
-              key={index}
-              className="prompt-btn"
-              onClick={() => setInput(prompt)}
-            >
-              {prompt}
-            </button>
-          ))}
-        </div>
-      </div>
+          {/* Compact Example Prompts */}
+          <Spacings.Stack scale="xs">
+            <Text.Detail tone="secondary">Try examples:</Text.Detail>
+            <div className="compact-examples-grid">
+              {examplePrompts.map((prompt, index) => (
+                <SecondaryButton
+                  key={index}
+                  label={prompt}
+                  onClick={() => setInput(prompt)}
+                  size="small"
+                  tone="secondary"
+                />
+              ))}
+            </div>
+          </Spacings.Stack>
+        </Spacings.Stack>
+      </Card>
 
       {/* Messages */}
-      <div className="messages-container">
+      <Card theme="light" type="raised" className="messages-container">
         {messages.length === 0 ? (
-          <div
-            style={{ textAlign: "center", color: "#6c757d", padding: "40px" }}
-          >
-            <p>Start a conversation to see the streaming in action!</p>
-            <p style={{ fontSize: "0.9rem", marginTop: "10px" }}>
-              {protocol === "data-stream"
-                ? "Data stream protocol supports human-in-the-loop for tool calls"
-                : "Text stream protocol shows basic text streaming"}
-            </p>
-          </div>
+          <Spacings.Stack scale="l" alignItems="center">
+            <Text.Headline as="h2">Start a conversation</Text.Headline>
+            <Text.Detail tone="secondary">
+              Data stream protocol supports human-in-the-loop for tool calls
+            </Text.Detail>
+          </Spacings.Stack>
         ) : (
-          messages.map((message) => (
-            <div key={message.id} className={`message ${message.role}`}>
-              <div className="message-role">
-                {message.role === "user" ? "You" : "AI"}
-                {isLoading && message.role === "assistant" && (
-                  <span className="streaming-indicator"></span>
-                )}
-              </div>
-              {message.parts?.map((part, partIndex) =>
-                renderMessagePart(part, message.id, partIndex)
-              )}
-            </div>
-          ))
+          <Spacings.Stack scale="s">
+            {messages
+              .filter((message) => message.role !== "system")
+              .map((message) => (
+                <Card
+                  key={message.id}
+                  theme={message.role === "user" ? "dark" : "light"}
+                  type="flat"
+                  className={`message-card ${message.role}`}
+                >
+                  <Spacings.Stack scale="xs">
+                    <Spacings.Inline scale="xs" alignItems="center">
+                      <Text.Caption
+                        tone={
+                          message.role === "user" ? "inverted" : "secondary"
+                        }
+                      >
+                        {message.role === "user" ? "You" : "AI Assistant"}
+                      </Text.Caption>
+                      {isLoading && message.role === "assistant" && (
+                        <LoadingSpinner size="s" />
+                      )}
+                    </Spacings.Inline>
+                    <Spacings.Stack scale="xs">
+                      {message.parts?.map((part, partIndex) =>
+                        renderMessagePart(
+                          part,
+                          message.id,
+                          partIndex,
+                          message.role
+                        )
+                      )}
+                    </Spacings.Stack>
+                  </Spacings.Stack>
+                </Card>
+              ))}
+            <div ref={messagesEndRef} />
+          </Spacings.Stack>
         )}
-      </div>
+      </Card>
 
       {/* Input Form */}
-      <div className="input-container">
-        <form onSubmit={handleSendMessage} className="input-form">
-          <input
-            type="text"
-            className="input-field"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={
-              pendingToolCallConfirmation
-                ? "Please confirm or deny the tool call above..."
-                : "Type your message here..."
-            }
-            disabled={
-              isLoading ||
-              pendingToolCallConfirmation ||
-              serverStatus !== "connected"
-            }
-          />
-          <button
-            type="submit"
-            className="send-button"
-            disabled={
-              isLoading ||
-              pendingToolCallConfirmation ||
-              serverStatus !== "connected" ||
-              !input.trim()
-            }
-          >
-            <Send size={18} />
-            Send
-          </button>
-        </form>
-      </div>
+      <Card theme="light" type="raised">
+        <Spacings.Stack scale="s">
+          <form onSubmit={handleSendMessage} className="input-form">
+            <Spacings.Inline scale="s" alignItems="flex-end">
+              <div className="input-container">
+                <TextInput
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder={
+                    pendingToolCallConfirmation
+                      ? "Please confirm or deny the tool call above..."
+                      : "Type your message here..."
+                  }
+                  isDisabled={
+                    isLoading ||
+                    pendingToolCallConfirmation ||
+                    serverStatus !== "connected"
+                  }
+                />
+              </div>
+              <PrimaryButton
+                type="submit"
+                label={
+                  <Spacings.Inline scale="xs" alignItems="center">
+                    {isLoading ? (
+                      <LoadingSpinner size="s" />
+                    ) : (
+                      <Send size={16} />
+                    )}
+                    <span>{isLoading ? "Sending..." : "Send"}</span>
+                  </Spacings.Inline>
+                }
+                isDisabled={
+                  isLoading ||
+                  pendingToolCallConfirmation ||
+                  serverStatus !== "connected" ||
+                  !input.trim()
+                }
+                size="medium"
+              />
+            </Spacings.Inline>
+          </form>
+        </Spacings.Stack>
+      </Card>
     </div>
   );
 }

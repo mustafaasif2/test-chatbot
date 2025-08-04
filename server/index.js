@@ -69,6 +69,100 @@ const tools = {
     outputSchema: z.string(),
     // No execute function - requires human confirmation
   }),
+
+  commercetoolsDocumentation: tool({
+    description:
+      "Search commercetools documentation for information about APIs, types, endpoints, and guides. Use this when you need specific information about commercetools development, GraphQL schemas, REST APIs, or implementation guidance.",
+    inputSchema: z.object({
+      query: z
+        .string()
+        .describe(
+          "The search query to find relevant documentation (e.g., 'product variants', 'cart API', 'GraphQL setup')"
+        ),
+      limit: z
+        .number()
+        .optional()
+        .describe("Maximum number of results to return (default: 3)"),
+      crowding: z
+        .number()
+        .optional()
+        .describe("Maximum number of results per content type (default: 3)"),
+      contentTypes: z
+        .array(
+          z.enum([
+            "apiType",
+            "apiEndpoint",
+            "referenceDocs",
+            "guidedDocs",
+            "userDocs",
+          ])
+        )
+        .optional()
+        .describe("Filter by content types"),
+      products: z
+        .array(
+          z.enum(["Composable Commerce", "Frontend", "Checkout", "Connect"])
+        )
+        .optional()
+        .describe("Filter by commercetools products"),
+    }),
+    outputSchema: z.string(),
+    execute: async ({
+      query,
+      limit = 3,
+      crowding = 3,
+      contentTypes,
+      products,
+    }) => {
+      try {
+        // Build query parameters
+        const params = new URLSearchParams({
+          input: query,
+          limit: limit.toString(),
+          crowding: crowding.toString(),
+        });
+
+        // Add content types if specified
+        if (contentTypes && contentTypes.length > 0) {
+          contentTypes.forEach((type) => params.append("contentTypes", type));
+        }
+
+        // Add products if specified
+        if (products && products.length > 0) {
+          products.forEach((product) => params.append("products", product));
+        }
+
+        // Make request to commercetools documentation API
+        const response = await fetch(
+          `https://docs.commercetools.com/apis/rest/content/similar-content?${params.toString()}`
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            `API request failed: ${response.status} ${response.statusText}`
+          );
+        }
+
+        const data = await response.json();
+
+        if (!data.similarContent || data.similarContent.length === 0) {
+          return `No documentation found for query: "${query}". Try different search terms or broaden your search.`;
+        }
+
+        // Format the results concisely for AI to summarize
+        let result = `Documentation search results for "${query}":\n\n`;
+
+        data.similarContent.slice(0, 3).forEach((item, index) => {
+          result += `${index + 1}. ${item.metadata.title}\n`;
+          result += `${item.content.substring(0, 200)}...\n\n`;
+        });
+
+        return result;
+      } catch (error) {
+        return `Error searching commercetools documentation: ${error.message}`;
+      }
+    },
+  }),
 };
 
 // Approval constants
@@ -83,12 +177,19 @@ const SYSTEM_MESSAGES = {
 - Getting weather information for cities
 - Checking local time in different locations
 - Sending emails (with user approval)
+- Searching commercetools documentation for development guidance, API references, and implementation help
 
-Always be polite and professional in your responses.
+When you use the commercetools documentation tool:
+1. The tool will provide you with relevant documentation content
+2. You MUST follow this two-step response format:
+   - First: Summarize what information you retrieved from the documentation
+   - Second: Answer the user's specific question based on that information
+3. Start your response with "Based on the documentation I found:" and summarize the key points
+4. Then provide a clear answer to the user's question
+5. Do NOT display the raw tool output - always provide structured summaries and answers
+6. If the documentation doesn't fully answer the question, mention what information is available and what might be missing
 
-IMPORTANT INSTRUCTION: You MUST end EVERY single response with a new line and the word "Okay." No exceptions.
-
-Okay.`,
+Always be polite and professional in your responses.`,
 
   SUMMARIZE: `Please provide a brief summary of the conversation so far, focusing on:
 - Key topics discussed
@@ -181,10 +282,12 @@ async function processToolCalls(messages, writer) {
 
       if (part.output === APPROVAL.YES) {
         console.log("✅ User approved tool execution");
+        const inputToUse = part.input;
+
         // Execute the tool based on tool name
         switch (toolName) {
           case "getWeatherInformation":
-            console.log(`🌤️  Getting weather for city: ${part.input.city}`);
+            console.log(`🌤️  Getting weather for city: ${inputToUse.city}`);
             const weatherConditions = [
               "sunny",
               "cloudy",
@@ -197,7 +300,7 @@ async function processToolCalls(messages, writer) {
                 Math.floor(Math.random() * weatherConditions.length)
               ];
             result = `The weather in ${
-              part.input.city
+              inputToUse.city
             } is currently ${randomWeather}. Temperature is around ${
               Math.floor(Math.random() * 30) + 10
             }°C.`;
@@ -205,8 +308,8 @@ async function processToolCalls(messages, writer) {
             break;
 
           case "sendEmail":
-            console.log(`📧 Sending email to: ${part.input.to}`);
-            result = `Email sent successfully to ${part.input.to} with subject: "${part.input.subject}"`;
+            console.log(`📧 Sending email to: ${inputToUse.to}`);
+            result = `Email sent successfully to ${inputToUse.to} with subject: "${inputToUse.subject}"`;
             console.log(`📨 Email result: ${result}`);
             break;
 
@@ -394,16 +497,33 @@ app.get("/api/health", (req, res) => {
   res.json(currentStatus);
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log("\n🚀 Server initialization:");
-  console.log(`📡 Server running on http://localhost:${PORT}`);
-  console.log(
-    `💬 Text stream endpoint: http://localhost:${PORT}/api/chat/text-stream`
-  );
-  console.log(
-    `🔄 Data stream endpoint: http://localhost:${PORT}/api/chat/data-stream`
-  );
-  console.log(`🛠️  Available tools: ${Object.keys(tools).join(", ")}`);
-  console.log("\n⌛ Waiting for requests...\n");
-});
+// Start server with port fallback
+function startServer(port) {
+  const server = app
+    .listen(port)
+    .on("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        console.log(`⚠️  Port ${port} is busy, trying ${port + 1}...`);
+        startServer(port + 1);
+      } else {
+        console.error("❌ Server error:", err);
+        process.exit(1);
+      }
+    })
+    .on("listening", () => {
+      const actualPort = server.address().port;
+      console.log("\n🚀 Server initialization:");
+      console.log(`📡 Server running on http://localhost:${actualPort}`);
+      console.log(
+        `💬 Text stream endpoint: http://localhost:${actualPort}/api/chat/text-stream`
+      );
+      console.log(
+        `🔄 Data stream endpoint: http://localhost:${actualPort}/api/chat/data-stream`
+      );
+      console.log(`🛠️  Available tools: ${Object.keys(tools).join(", ")}`);
+      console.log("\n⌛ Waiting for requests...\n");
+    });
+}
+
+// Start server with initial port
+startServer(PORT);
