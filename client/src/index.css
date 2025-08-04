@@ -327,6 +327,113 @@ a {
   box-shadow: var(--shadow-1) !important;
 }
 
+/* Extra tiny text for examples header */
+.tiny-text {
+  font-size: var(--font-size-10) !important;
+  line-height: 1.2 !important;
+}
+
+/* Markdown content styling for AI responses */
+.markdown-content {
+  color: var(--color-solid);
+}
+
+.markdown-paragraph {
+  margin-bottom: var(--spacing-xs);
+  line-height: 1.6;
+}
+
+.markdown-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-list {
+  margin: var(--spacing-xs) 0;
+  padding-left: var(--spacing-m);
+  list-style: none;
+}
+
+.markdown-list-item {
+  position: relative;
+  margin-bottom: var(--spacing-xs);
+  padding-left: var(--spacing-s);
+}
+
+.markdown-list-item::before {
+  content: "•";
+  color: var(--color-primary);
+  font-weight: var(--font-weight-bold);
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.markdown-bold {
+  font-weight: var(--font-weight-bold);
+  color: var(--color-solid);
+}
+
+.markdown-italic {
+  font-style: italic;
+  color: var(--color-neutral-60);
+}
+
+.markdown-inline-code {
+  background: var(--color-neutral-95);
+  border: 1px solid var(--color-neutral-90);
+  border-radius: var(--border-radius-2);
+  padding: 2px var(--spacing-xs);
+  font-family: "JetBrains Mono", "Courier New", monospace;
+  font-size: var(--font-size-12);
+  color: var(--color-primary);
+}
+
+.markdown-code-block {
+  background: var(--color-neutral-98);
+  border: 1px solid var(--color-neutral-90);
+  border-radius: var(--border-radius-4);
+  padding: var(--spacing-s);
+  margin: var(--spacing-s) 0;
+  font-family: "JetBrains Mono", "Courier New", monospace;
+  font-size: var(--font-size-12);
+  white-space: pre-wrap;
+  overflow-x: auto;
+  line-height: 1.5;
+}
+
+.markdown-code-block code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* Ensure proper spacing between markdown elements */
+.markdown-content > *:first-child {
+  margin-top: 0;
+}
+
+.markdown-content > *:last-child {
+  margin-bottom: 0;
+}
+
+/* Examples collapse animation */
+.examples-collapse {
+  animation: slideDown 0.3s ease-out;
+  transform-origin: top;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
   .chat-container {

@@ -7,6 +7,8 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
 } from "ai";
 import { Send, Wifi, WifiOff, Clock, Cloud, Mail, Book } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 // commercetools UIKit imports
 import Card from "@commercetools-uikit/card";
@@ -15,9 +17,9 @@ import SecondaryButton from "@commercetools-uikit/secondary-button";
 import TextInput from "@commercetools-uikit/text-input";
 import Text from "@commercetools-uikit/text";
 import Spacings from "@commercetools-uikit/spacings";
+import { CaretDownIcon, CaretUpIcon } from "@commercetools-uikit/icons";
 
 import LoadingSpinner from "@commercetools-uikit/loading-spinner";
-import Constraints from "@commercetools-uikit/constraints";
 
 const APPROVAL = {
   YES: "Yes, confirmed.",
@@ -33,6 +35,7 @@ const API_URL = process.env.REACT_APP_API_URL || "http://localhost:3001";
 function App() {
   const [serverStatus, setServerStatus] = useState("connecting");
   const [input, setInput] = useState("");
+  const [isExamplesExpanded, setIsExamplesExpanded] = useState(false);
   const messagesEndRef = useRef(null);
 
   // Use only data stream transport
@@ -95,7 +98,8 @@ function App() {
       (part) =>
         isToolUIPart(part) &&
         part.state === "input-available" &&
-        TOOLS_REQUIRING_CONFIRMATION.includes(getToolName(part))
+        TOOLS_REQUIRING_CONFIRMATION.includes(getToolName(part)) &&
+        !part.output // Only count as pending if no output (not approved/denied yet)
     )
   );
 
@@ -166,14 +170,56 @@ function App() {
 
   const renderMessagePart = (part, messageId, partIndex, messageRole) => {
     if (part.type === "text") {
-      return (
-        <Text.Body
-          key={`${messageId}-${partIndex}`}
-          tone={messageRole === "user" ? "inverted" : "primary"}
-        >
-          {part.text}
-        </Text.Body>
-      );
+      if (messageRole === "assistant") {
+        // Render AI responses with markdown formatting
+        return (
+          <div key={`${messageId}-${partIndex}`} className="markdown-content">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                // Custom components for better styling
+                p: ({ children }) => (
+                  <Text.Detail tone="primary" className="markdown-paragraph">
+                    {children}
+                  </Text.Detail>
+                ),
+                ul: ({ children }) => (
+                  <ul className="markdown-list">{children}</ul>
+                ),
+                li: ({ children }) => (
+                  <li className="markdown-list-item">
+                    <Text.Detail tone="primary">{children}</Text.Detail>
+                  </li>
+                ),
+                strong: ({ children }) => (
+                  <strong className="markdown-bold">{children}</strong>
+                ),
+                em: ({ children }) => (
+                  <em className="markdown-italic">{children}</em>
+                ),
+                code: ({ children }) => (
+                  <code className="markdown-inline-code">{children}</code>
+                ),
+                pre: ({ children }) => (
+                  <pre className="markdown-code-block">{children}</pre>
+                ),
+              }}
+            >
+              {part.text}
+            </ReactMarkdown>
+          </div>
+        );
+      } else {
+        // Keep plain text for user messages
+        return (
+          <Text.Detail
+            key={`${messageId}-${partIndex}`}
+            tone={messageRole === "user" ? "inverted" : "primary"}
+          >
+            {part.text}
+          </Text.Detail>
+        );
+      }
     }
 
     if (isToolUIPart(part)) {
@@ -242,7 +288,7 @@ function App() {
                   {getToolDisplayName(toolName)}
                 </Text.Caption>
               </Spacings.Inline>
-              <Text.Body>{part.output}</Text.Body>
+              <Text.Detail>{part.output}</Text.Detail>
             </Spacings.Stack>
           </Card>
         );
@@ -275,20 +321,40 @@ function App() {
             </div>
           </Spacings.Inline>
 
-          {/* Compact Example Prompts */}
+          {/* Collapsible Example Prompts */}
           <Spacings.Stack scale="xs">
-            <Text.Detail tone="secondary">Try examples:</Text.Detail>
-            <div className="compact-examples-grid">
-              {examplePrompts.map((prompt, index) => (
-                <SecondaryButton
-                  key={index}
-                  label={prompt}
-                  onClick={() => setInput(prompt)}
-                  size="small"
-                  tone="secondary"
-                />
-              ))}
-            </div>
+            <SecondaryButton
+              label={
+                <Spacings.Inline scale="xs" alignItems="center">
+                  <Text.Caption tone="secondary" className="tiny-text">
+                    {isExamplesExpanded ? "Hide examples" : "Show examples"}
+                  </Text.Caption>
+                  {isExamplesExpanded ? (
+                    <CaretUpIcon size="small" />
+                  ) : (
+                    <CaretDownIcon size="small" />
+                  )}
+                </Spacings.Inline>
+              }
+              onClick={() => setIsExamplesExpanded(!isExamplesExpanded)}
+              size="small"
+              tone="secondary"
+            />
+            {isExamplesExpanded && (
+              <div className="examples-collapse">
+                <div className="compact-examples-grid">
+                  {examplePrompts.map((prompt, index) => (
+                    <SecondaryButton
+                      key={index}
+                      label={prompt}
+                      onClick={() => setInput(prompt)}
+                      size="small"
+                      tone="secondary"
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </Spacings.Stack>
         </Spacings.Stack>
       </Card>
@@ -297,10 +363,10 @@ function App() {
       <Card theme="light" type="raised" className="messages-container">
         {messages.length === 0 ? (
           <Spacings.Stack scale="l" alignItems="center">
-            <Text.Headline as="h2">Start a conversation</Text.Headline>
-            <Text.Detail tone="secondary">
+            <Text.Subheadline as="h2">Start a conversation</Text.Subheadline>
+            <Text.Caption tone="secondary">
               Data stream protocol supports human-in-the-loop for tool calls
-            </Text.Detail>
+            </Text.Caption>
           </Spacings.Stack>
         ) : (
           <Spacings.Stack scale="s">

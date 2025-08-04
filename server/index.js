@@ -13,6 +13,7 @@ const {
 } = require("ai");
 const { createGoogleGenerativeAI } = require("@ai-sdk/google");
 const { z } = require("zod");
+const { CommercetoolsMCPClient } = require("./services/mcp-client-new");
 
 // Initialize Google AI client
 const google = createGoogleGenerativeAI({
@@ -21,6 +22,10 @@ const google = createGoogleGenerativeAI({
 
 // Create model instance
 const model = google("gemini-2.0-flash");
+
+// Initialize MCP client for commercetools
+const mcpClient = new CommercetoolsMCPClient();
+let mcpTools = {};
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -165,6 +170,52 @@ const tools = {
   }),
 };
 
+// Function to get all available tools (static + MCP)
+function getAllTools() {
+  return {
+    ...tools,
+    ...mcpTools,
+  };
+}
+
+// Initialize MCP client on server startup
+async function initializeMCPClient() {
+  try {
+    // Only initialize if commercetools credentials are provided
+    if (
+      process.env.COMMERCETOOLS_CLIENT_ID &&
+      process.env.COMMERCETOOLS_CLIENT_SECRET &&
+      process.env.COMMERCETOOLS_PROJECT_KEY &&
+      process.env.COMMERCETOOLS_AUTH_URL &&
+      process.env.COMMERCETOOLS_API_URL
+    ) {
+      console.log("🔄 Initializing commercetools MCP client...");
+      await mcpClient.connect();
+      mcpTools = await mcpClient.getTools();
+      console.log(
+        `✅ MCP client initialized with ${Object.keys(mcpTools).length} tools`
+      );
+    } else {
+      console.log(
+        "⚠️  Commercetools MCP not initialized - missing environment variables"
+      );
+      console.log(
+        "   To enable commercetools integration, set these environment variables:"
+      );
+      console.log("   - COMMERCETOOLS_CLIENT_ID");
+      console.log("   - COMMERCETOOLS_CLIENT_SECRET");
+      console.log("   - COMMERCETOOLS_PROJECT_KEY");
+      console.log("   - COMMERCETOOLS_AUTH_URL");
+      console.log("   - COMMERCETOOLS_API_URL");
+    }
+  } catch (error) {
+    console.error("❌ Failed to initialize MCP client:", error);
+    console.log(
+      "⚠️  Server will continue without commercetools MCP integration"
+    );
+  }
+}
+
 // Approval constants
 const APPROVAL = {
   YES: "Yes, confirmed.",
@@ -178,16 +229,20 @@ const SYSTEM_MESSAGES = {
 - Checking local time in different locations
 - Sending emails (with user approval)
 - Searching commercetools documentation for development guidance, API references, and implementation help
+- Accessing live commercetools APIs for comprehensive e-commerce operations including:
+  * Reading and managing products, categories, and product types
+  * Managing customer data and customer groups
+  * Handling carts, orders, and quotes
+  * Working with inventory and pricing
+  * Managing discounts and promotions
+  * Reading project and store information
 
-When you use the commercetools documentation tool:
-1. The tool will provide you with relevant documentation content
-2. You MUST follow this two-step response format:
-   - First: Summarize what information you retrieved from the documentation
-   - Second: Answer the user's specific question based on that information
-3. Start your response with "Based on the documentation I found:" and summarize the key points
-4. Then provide a clear answer to the user's question
-5. Do NOT display the raw tool output - always provide structured summaries and answers
-6. If the documentation doesn't fully answer the question, mention what information is available and what might be missing
+When you use commercetools tools:
+1. Use the documentation search tool for finding guides, API references, and implementation examples
+2. Use the live API tools to access real-time data from a commercetools project
+3. Always explain what data you're retrieving and why it's relevant to the user's question
+4. If you encounter errors, explain them clearly and suggest alternatives
+5. For complex operations, break them down into logical steps
 
 Always be polite and professional in your responses.`,
 
@@ -314,8 +369,20 @@ async function processToolCalls(messages, writer) {
             break;
 
           default:
-            console.log(`❌ Unknown tool: ${toolName}`);
-            result = "Error: Unknown tool";
+            // Check if it's an MCP tool
+            if (mcpTools[toolName]) {
+              console.log(`🔧 Executing MCP tool: ${toolName}`);
+              try {
+                result = await mcpClient.callTool(toolName, inputToUse);
+                console.log(`✅ MCP tool ${toolName} executed successfully`);
+              } catch (error) {
+                console.error(`❌ MCP tool ${toolName} failed:`, error);
+                result = `Error executing ${toolName}: ${error.message}`;
+              }
+            } else {
+              console.log(`❌ Unknown tool: ${toolName}`);
+              result = "Error: Unknown tool";
+            }
         }
       } else if (part.output === APPROVAL.NO) {
         console.log("❌ User denied tool execution");
@@ -350,10 +417,11 @@ app.post("/api/chat/text-stream", async (req, res) => {
     console.log("📝 Last message:", messages[messages.length - 1]);
 
     console.log("🤖 Initializing text stream with model");
+    const allTools = getAllTools();
     const result = streamText({
       model: model,
       messages: convertToModelMessages(messages),
-      tools,
+      tools: allTools,
       maxSteps: 5,
     });
 
@@ -432,10 +500,11 @@ app.post("/api/chat/data-stream", async (req, res) => {
         console.log("🤖 Model messages:", modelMessages);
 
         console.log("🤖 Initializing stream with model");
+        const allTools = getAllTools();
         const result = streamText({
           model: model,
           messages: modelMessages,
-          tools,
+          tools: allTools,
           maxSteps: 5,
         });
 
@@ -498,8 +567,10 @@ app.get("/api/health", (req, res) => {
 });
 
 // Start server with port fallback
+let server;
+
 function startServer(port) {
-  const server = app
+  server = app
     .listen(port)
     .on("error", (err) => {
       if (err.code === "EADDRINUSE") {
@@ -520,10 +591,66 @@ function startServer(port) {
       console.log(
         `🔄 Data stream endpoint: http://localhost:${actualPort}/api/chat/data-stream`
       );
-      console.log(`🛠️  Available tools: ${Object.keys(tools).join(", ")}`);
-      console.log("\n⌛ Waiting for requests...\n");
+
+      // Initialize MCP client and then show available tools
+      initializeMCPClient().then(() => {
+        const allTools = getAllTools();
+        console.log(`🛠️  Available tools: ${Object.keys(allTools).join(", ")}`);
+        console.log("\n⌛ Waiting for requests...\n");
+        console.log("💡 To stop the server and free ports, press Ctrl+C");
+      });
     });
 }
+
+// Graceful shutdown handling
+let isShuttingDown = false;
+
+const gracefulShutdown = async (signal) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.log(`\n🔄 Received ${signal}. Shutting down server gracefully...`);
+
+  try {
+    // Close the HTTP server
+    if (server) {
+      await new Promise((resolve) => {
+        server.close(() => {
+          console.log("✅ HTTP server closed");
+          resolve();
+        });
+      });
+    }
+
+    // Disconnect MCP client
+    await mcpClient.disconnect();
+    console.log("✅ MCP client disconnected");
+
+    // Force kill any remaining MCP processes
+    const { spawn } = require("child_process");
+    spawn("pkill", ["-f", "mcp-essentials"], { stdio: "ignore" });
+
+    console.log("✅ Graceful shutdown complete");
+    process.exit(0);
+  } catch (error) {
+    console.error("❌ Error during shutdown:", error);
+    process.exit(1);
+  }
+};
+
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+
+// Handle uncaught exceptions
+process.on("uncaughtException", (error) => {
+  console.error("❌ Uncaught Exception:", error);
+  gracefulShutdown("uncaughtException");
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("❌ Unhandled Rejection at:", promise, "reason:", reason);
+  gracefulShutdown("unhandledRejection");
+});
 
 // Start server with initial port
 startServer(PORT);

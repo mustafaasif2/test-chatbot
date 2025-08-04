@@ -5,10 +5,13 @@
   "main": "server/index.js",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "start": "npm run dev",
     "server": "cd server && npm run dev",
     "client": "cd client && npm start",
     "build": "cd client && npm run build",
-    "install-all": "npm install && cd server && npm install && cd ../client && npm install --legacy-peer-deps"
+    "install-all": "npm install && cd server && npm install && cd ../client && npm install --legacy-peer-deps",
+    "cleanup": "./cleanup-ports.sh",
+    "stop": "./cleanup-ports.sh"
   },
   "keywords": [
     "ai-sdk",
