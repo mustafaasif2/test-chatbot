@@ -6,7 +6,18 @@ import {
   getToolName,
   lastAssistantMessageIsCompleteWithToolCalls,
 } from "ai";
-import { Send, Wifi, WifiOff, Clock, Cloud, Mail, Book } from "lucide-react";
+import {
+  Send,
+  Wifi,
+  WifiOff,
+  Clock,
+  Cloud,
+  Mail,
+  Book,
+  Settings,
+  Check,
+  X,
+} from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -29,19 +40,49 @@ const APPROVAL = {
 // Tools that require human confirmation
 const TOOLS_REQUIRING_CONFIRMATION = ["getWeatherInformation", "sendEmail"];
 
-// Get API URL from environment or default
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:3001";
 
 function App() {
   const [serverStatus, setServerStatus] = useState("connecting");
   const [input, setInput] = useState("");
   const [isExamplesExpanded, setIsExamplesExpanded] = useState(false);
+  const [showCredentialsForm, setShowCredentialsForm] = useState(false);
+  const [commercetoolsCredentials, setCommercetoolsCredentials] =
+    useState(null);
+  const [credentialStatus, setCredentialStatus] = useState("none"); // 'none', 'validating', 'valid', 'invalid'
+  const [credentialError, setCredentialError] = useState(null);
   const messagesEndRef = useRef(null);
 
-  // Use only data stream transport
-  const transport = new DefaultChatTransport({
-    api: `${API_URL}/api/chat/data-stream`,
-  });
+  // Use ref to always have current credentials
+  const credentialsRef = useRef(commercetoolsCredentials);
+  credentialsRef.current = commercetoolsCredentials;
+
+  // Create transport that dynamically includes credentials
+  const transport = React.useMemo(() => {
+    console.log("🔄 Creating transport with dynamic credentials");
+
+    return new DefaultChatTransport({
+      api: `${API_URL}/api/chat/data-stream`,
+      headers: () => {
+        const currentCredentials = credentialsRef.current;
+        return {
+          "X-Commercetools-Project": currentCredentials?.projectKey || "",
+        };
+      },
+      body: () => {
+        const currentCredentials = credentialsRef.current;
+        console.log(
+          "🔍 Frontend sending credentials:",
+          currentCredentials
+            ? `Project: ${currentCredentials.projectKey}`
+            : "No credentials"
+        );
+        return {
+          commercetoolsCredentials: currentCredentials,
+        };
+      },
+    });
+  }, []); // Only create once, but use ref for current credentials
 
   const { messages, sendMessage, addToolResult, isLoading } = useChat({
     transport,
@@ -56,6 +97,125 @@ function App() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Validate commercetools credentials
+  const validateCredentials = async (credentials) => {
+    setCredentialStatus("validating");
+    setCredentialError(null);
+
+    try {
+      const response = await fetch(`${API_URL}/api/commercetools/validate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ credentials }),
+      });
+
+      const result = await response.json();
+
+      if (result.valid) {
+        setCredentialStatus("valid");
+        setCommercetoolsCredentials(credentials);
+        setShowCredentialsForm(false);
+        return true;
+      } else {
+        setCredentialStatus("invalid");
+
+        // Show specific error messages based on error type
+        let displayError = result.error;
+        switch (result.errorType) {
+          case "AUTHENTICATION_ERROR":
+            displayError = `🔑 Authentication Failed: ${result.error}`;
+            break;
+          case "PROJECT_NOT_FOUND":
+            displayError = `📁 Project Error: ${result.error}`;
+            break;
+          case "PERMISSION_ERROR":
+            displayError = `🚫 Permission Error: ${result.error}`;
+            break;
+          case "NETWORK_ERROR":
+            displayError = `🌐 Network Error: ${result.error}`;
+            break;
+          case "MISSING_FIELDS":
+            displayError = `📝 Missing Information: ${result.error}`;
+            break;
+          case "INVALID_URL":
+            displayError = `🔗 URL Error: ${result.error}`;
+            break;
+          default:
+            displayError = `❌ Error: ${result.error}`;
+        }
+
+        setCredentialError(displayError);
+        return false;
+      }
+    } catch (error) {
+      setCredentialStatus("invalid");
+      setCredentialError(
+        `🌐 Connection Error: Failed to validate credentials - ${error.message}`
+      );
+      return false;
+    }
+  };
+
+  // Handle credential form submission
+  const handleCredentialsSubmit = async (formData) => {
+    const credentials = {
+      clientId: formData.clientId,
+      clientSecret: formData.clientSecret,
+      projectKey: formData.projectKey,
+      authUrl:
+        formData.authUrl || "https://auth.europe-west1.gcp.commercetools.com",
+      apiUrl:
+        formData.apiUrl || "https://api.europe-west1.gcp.commercetools.com",
+    };
+
+    await validateCredentials(credentials);
+  };
+
+  // Clear credentials
+  const clearCredentials = () => {
+    setCommercetoolsCredentials(null);
+    setCredentialStatus("none");
+    setCredentialError(null);
+  };
+
+  // Debug function to test MCP tools
+  const debugMCPTools = async () => {
+    if (!commercetoolsCredentials) {
+      alert("Please set up credentials first");
+      return;
+    }
+
+    try {
+      console.log("🔍 Testing MCP tools...");
+      const response = await fetch(`${API_URL}/api/commercetools/debug`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ credentials: commercetoolsCredentials }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        console.log("✅ MCP Debug Results:", result);
+        alert(
+          `Debug Success!\n\nMCP Tools: ${result.mcpToolCount}\nTotal Tools: ${
+            result.totalToolCount
+          }\n\nTools: ${result.allTools.join(", ")}`
+        );
+      } else {
+        console.error("❌ Debug failed:", result);
+        alert(`Debug Failed: ${result.error}`);
+      }
+    } catch (error) {
+      console.error("❌ Debug error:", error);
+      alert(`Debug Error: ${error.message}`);
+    }
+  };
 
   const getToolIcon = (toolName) => {
     switch (toolName) {
@@ -151,7 +311,139 @@ function App() {
     "How do I work with product variants in commercetools?",
     "Show me commercetools GraphQL setup documentation",
     "What are the cart API endpoints in commercetools?",
+    "List products for my project",
+    "Show me the orders for this project",
   ];
+
+  // Credentials Form Component
+  const CredentialsForm = () => {
+    const [formData, setFormData] = useState({
+      clientId: "",
+      clientSecret: "",
+      projectKey: "",
+      authUrl: "https://auth.europe-west1.gcp.commercetools.com",
+      apiUrl: "https://api.europe-west1.gcp.commercetools.com",
+    });
+
+    const handleSubmit = (e) => {
+      e.preventDefault();
+      handleCredentialsSubmit(formData);
+    };
+
+    const handleChange = (field, value) => {
+      setFormData((prev) => ({ ...prev, [field]: value }));
+    };
+
+    return (
+      <Card theme="light" type="raised">
+        <Spacings.Stack scale="m">
+          <Spacings.Inline scale="s" alignItems="center">
+            <Settings size={20} />
+            <Text.Subheadline as="h3">
+              Commercetools Credentials
+            </Text.Subheadline>
+          </Spacings.Inline>
+
+          <form onSubmit={handleSubmit}>
+            <Spacings.Stack scale="s">
+              <TextInput
+                name="clientId"
+                placeholder="Client ID"
+                value={formData.clientId}
+                onChange={(e) => handleChange("clientId", e.target.value)}
+                isRequired
+              />
+
+              <TextInput
+                name="clientSecret"
+                placeholder="Client Secret"
+                value={formData.clientSecret}
+                onChange={(e) => handleChange("clientSecret", e.target.value)}
+                isRequired
+                type="password"
+              />
+
+              <TextInput
+                name="projectKey"
+                placeholder="Project Key"
+                value={formData.projectKey}
+                onChange={(e) => handleChange("projectKey", e.target.value)}
+                isRequired
+              />
+
+              <TextInput
+                name="authUrl"
+                placeholder="Auth URL"
+                value={formData.authUrl}
+                onChange={(e) => handleChange("authUrl", e.target.value)}
+              />
+
+              <TextInput
+                name="apiUrl"
+                placeholder="API URL"
+                value={formData.apiUrl}
+                onChange={(e) => handleChange("apiUrl", e.target.value)}
+              />
+
+              {credentialError && (
+                <Card theme="critical" type="flat">
+                  <Spacings.Stack scale="xs">
+                    <Text.Detail tone="critical" fontWeight="medium">
+                      {credentialError}
+                    </Text.Detail>
+                    {credentialStatus === "invalid" && (
+                      <Text.Caption tone="secondary">
+                        Please correct the above issues and try again.
+                      </Text.Caption>
+                    )}
+                  </Spacings.Stack>
+                </Card>
+              )}
+
+              {credentialStatus === "validating" && (
+                <Card theme="info" type="flat">
+                  <Spacings.Inline scale="s" alignItems="center">
+                    <LoadingSpinner size="s" />
+                    <Text.Detail tone="info">
+                      Validating credentials...
+                    </Text.Detail>
+                  </Spacings.Inline>
+                </Card>
+              )}
+
+              <Spacings.Inline scale="s" alignItems="center">
+                <PrimaryButton
+                  type="submit"
+                  iconLeft={
+                    credentialStatus === "validating" ? (
+                      <LoadingSpinner size="s" />
+                    ) : null
+                  }
+                  label={
+                    credentialStatus === "validating"
+                      ? "Validating..."
+                      : "Validate & Connect"
+                  }
+                  isDisabled={
+                    credentialStatus === "validating" ||
+                    !formData.clientId ||
+                    !formData.clientSecret ||
+                    !formData.projectKey
+                  }
+                  tone={credentialStatus === "invalid" ? "critical" : "primary"}
+                />
+
+                <SecondaryButton
+                  label="Cancel"
+                  onClick={() => setShowCredentialsForm(false)}
+                />
+              </Spacings.Inline>
+            </Spacings.Stack>
+          </form>
+        </Spacings.Stack>
+      </Card>
+    );
+  };
 
   const getToolDisplayName = (toolName) => {
     switch (toolName) {
@@ -312,13 +604,75 @@ function App() {
               <Text.Headline as="h1">
                 AI Assistant with Commercetools
               </Text.Headline>
+              <Text.Detail tone="secondary">
+                Powered by Google Gemini with MCP integration
+              </Text.Detail>
             </Spacings.Stack>
-            <div className={`status-indicator status-${serverStatus}`}>
-              <Spacings.Inline scale="xs" alignItems="center">
-                {getStatusIcon()}
-                <Text.Detail>{getStatusText()}</Text.Detail>
-              </Spacings.Inline>
-            </div>
+
+            <Spacings.Inline scale="s" alignItems="center">
+              <div className={`status-indicator status-${serverStatus}`}>
+                <Spacings.Inline scale="xs" alignItems="center">
+                  {getStatusIcon()}
+                  <Text.Detail>{getStatusText()}</Text.Detail>
+                </Spacings.Inline>
+              </div>
+
+              {/* Commercetools Status & Config */}
+              {credentialStatus === "valid" && (
+                <div
+                  className="status-indicator status-connected"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "var(--spacing-xs)",
+                  }}
+                >
+                  <Check size={12} />
+                  <span>{commercetoolsCredentials?.projectKey}</span>
+                </div>
+              )}
+
+              {credentialStatus === "invalid" && (
+                <div
+                  className="status-indicator status-disconnected"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "var(--spacing-xs)",
+                  }}
+                >
+                  <X size={12} />
+                  <span>Invalid Credentials</span>
+                </div>
+              )}
+
+              <SecondaryButton
+                iconLeft={<Settings size={16} />}
+                label={credentialStatus === "valid" ? "Change" : "Setup"}
+                onClick={() => setShowCredentialsForm(!showCredentialsForm)}
+                size="small"
+                tone={credentialStatus === "valid" ? "secondary" : "primary"}
+              />
+
+              {credentialStatus === "valid" && (
+                <>
+                  <SecondaryButton
+                    iconLeft={<Settings size={16} />}
+                    label="Debug"
+                    onClick={debugMCPTools}
+                    size="small"
+                    tone="info"
+                  />
+                  <SecondaryButton
+                    iconLeft={<X size={16} />}
+                    label="Clear"
+                    onClick={clearCredentials}
+                    size="small"
+                    tone="critical"
+                  />
+                </>
+              )}
+            </Spacings.Inline>
           </Spacings.Inline>
 
           {/* Collapsible Example Prompts */}
@@ -358,6 +712,9 @@ function App() {
           </Spacings.Stack>
         </Spacings.Stack>
       </Card>
+
+      {/* Credentials Form */}
+      {showCredentialsForm && <CredentialsForm />}
 
       {/* Messages */}
       <Card theme="light" type="raised" className="messages-container">

@@ -13,7 +13,10 @@ const {
 } = require("ai");
 const { createGoogleGenerativeAI } = require("@ai-sdk/google");
 const { z } = require("zod");
-const { CommercetoolsMCPClient } = require("./services/mcp-client-new");
+const {
+  CommercetoolsMCPClient,
+  MCPCredentialManager,
+} = require("./services/mcp-client-new");
 
 // Initialize Google AI client
 const google = createGoogleGenerativeAI({
@@ -23,16 +26,15 @@ const google = createGoogleGenerativeAI({
 // Create model instance
 const model = google("gemini-2.0-flash");
 
-// Initialize MCP client for commercetools
-const mcpClient = new CommercetoolsMCPClient();
-let mcpTools = {};
+// Initialize MCP credential manager for commercetools
+const mcpCredentialManager = new MCPCredentialManager();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "50mb" })); // Increase payload limit for large responses
 
 // Validate API key
 if (!process.env.GOOGLE_API_KEY) {
@@ -171,49 +173,55 @@ const tools = {
 };
 
 // Function to get all available tools (static + MCP)
-function getAllTools() {
+async function getAllTools(credentials = null) {
+  let mcpTools = {};
+
+  console.log(
+    "🔍 getAllTools called with credentials:",
+    credentials ? `Project: ${credentials.projectKey}` : "No credentials"
+  );
+
+  // If credentials provided, get MCP tools for those credentials
+  if (credentials) {
+    try {
+      console.log("🔄 Getting MCP tools for project:", credentials.projectKey);
+      mcpTools = await mcpCredentialManager.getTools(credentials);
+      console.log(
+        "✅ MCP tools loaded:",
+        Object.keys(mcpTools).length,
+        "tools"
+      );
+    } catch (error) {
+      console.error("❌ Failed to get MCP tools for credentials:", error);
+    }
+  } else {
+    // Try to get default tools from environment if available
+    try {
+      if (
+        process.env.COMMERCETOOLS_CLIENT_ID &&
+        process.env.COMMERCETOOLS_CLIENT_SECRET &&
+        process.env.COMMERCETOOLS_PROJECT_KEY &&
+        process.env.COMMERCETOOLS_AUTH_URL &&
+        process.env.COMMERCETOOLS_API_URL
+      ) {
+        const defaultCredentials = {
+          clientId: process.env.COMMERCETOOLS_CLIENT_ID,
+          clientSecret: process.env.COMMERCETOOLS_CLIENT_SECRET,
+          projectKey: process.env.COMMERCETOOLS_PROJECT_KEY,
+          authUrl: process.env.COMMERCETOOLS_AUTH_URL,
+          apiUrl: process.env.COMMERCETOOLS_API_URL,
+        };
+        mcpTools = await mcpCredentialManager.getTools(defaultCredentials);
+      }
+    } catch (error) {
+      console.error("❌ Failed to get default MCP tools:", error);
+    }
+  }
+
   return {
     ...tools,
     ...mcpTools,
   };
-}
-
-// Initialize MCP client on server startup
-async function initializeMCPClient() {
-  try {
-    // Only initialize if commercetools credentials are provided
-    if (
-      process.env.COMMERCETOOLS_CLIENT_ID &&
-      process.env.COMMERCETOOLS_CLIENT_SECRET &&
-      process.env.COMMERCETOOLS_PROJECT_KEY &&
-      process.env.COMMERCETOOLS_AUTH_URL &&
-      process.env.COMMERCETOOLS_API_URL
-    ) {
-      console.log("🔄 Initializing commercetools MCP client...");
-      await mcpClient.connect();
-      mcpTools = await mcpClient.getTools();
-      console.log(
-        `✅ MCP client initialized with ${Object.keys(mcpTools).length} tools`
-      );
-    } else {
-      console.log(
-        "⚠️  Commercetools MCP not initialized - missing environment variables"
-      );
-      console.log(
-        "   To enable commercetools integration, set these environment variables:"
-      );
-      console.log("   - COMMERCETOOLS_CLIENT_ID");
-      console.log("   - COMMERCETOOLS_CLIENT_SECRET");
-      console.log("   - COMMERCETOOLS_PROJECT_KEY");
-      console.log("   - COMMERCETOOLS_AUTH_URL");
-      console.log("   - COMMERCETOOLS_API_URL");
-    }
-  } catch (error) {
-    console.error("❌ Failed to initialize MCP client:", error);
-    console.log(
-      "⚠️  Server will continue without commercetools MCP integration"
-    );
-  }
 }
 
 // Approval constants
@@ -417,7 +425,8 @@ app.post("/api/chat/text-stream", async (req, res) => {
     console.log("📝 Last message:", messages[messages.length - 1]);
 
     console.log("🤖 Initializing text stream with model");
-    const allTools = getAllTools();
+    const { commercetoolsCredentials } = req.body;
+    const allTools = await getAllTools(commercetoolsCredentials);
     const result = streamText({
       model: model,
       messages: convertToModelMessages(messages),
@@ -456,20 +465,34 @@ app.post("/api/chat/text-stream", async (req, res) => {
 app.post("/api/chat/data-stream", async (req, res) => {
   console.log("\n📡 Received data stream request");
   try {
-    const { messages, includeSummary = false } = req.body;
+    const {
+      messages,
+      includeSummary = false,
+      commercetoolsCredentials,
+    } = req.body;
     console.log("req.body", req.body);
     console.log(`📥 Received ${messages.length} messages`);
     console.log("📝 Last message:", messages[messages.length - 1]);
+    console.log(
+      "🔐 Commercetools credentials:",
+      commercetoolsCredentials
+        ? `Project: ${commercetoolsCredentials.projectKey}`
+        : "No credentials provided"
+    );
 
     // Always ensure system message is present
     let processedMessages = messages;
     const hasSystemMessage = messages.some((m) => m.role === "system");
 
     if (!hasSystemMessage) {
-      processedMessages = [
-        createSystemMessage(SYSTEM_MESSAGES.DEFAULT),
-        ...messages,
-      ];
+      let systemMessage = SYSTEM_MESSAGES.DEFAULT;
+
+      // Enhance system message if commercetools credentials are provided
+      if (commercetoolsCredentials) {
+        systemMessage += `\n\nIMPORTANT: You are currently connected to commercetools project "${commercetoolsCredentials.projectKey}" and have access to live commercetools MCP tools. You can directly access products, orders, customers, carts, categories, and inventory data for this project. Use these tools to answer questions about the user's commercetools data.`;
+      }
+
+      processedMessages = [createSystemMessage(systemMessage), ...messages];
     }
 
     // Generate summary if requested and conversation is long enough
@@ -500,7 +523,11 @@ app.post("/api/chat/data-stream", async (req, res) => {
         console.log("🤖 Model messages:", modelMessages);
 
         console.log("🤖 Initializing stream with model");
-        const allTools = getAllTools();
+        const allTools = await getAllTools(commercetoolsCredentials);
+        console.log(
+          `🛠️  Total tools available: ${Object.keys(allTools).length}`,
+          Object.keys(allTools)
+        );
         const result = streamText({
           model: model,
           messages: modelMessages,
@@ -545,14 +572,100 @@ app.post("/api/chat/data-stream", async (req, res) => {
   }
 });
 
+// Commercetools credential validation endpoint
+app.post("/api/commercetools/validate", async (req, res) => {
+  console.log("\n📡 Received credential validation request");
+  try {
+    const { credentials } = req.body;
+
+    if (!credentials) {
+      return res.status(400).json({ error: "Credentials are required" });
+    }
+
+    const result = await mcpCredentialManager.validateCredentials(credentials);
+
+    if (result.valid) {
+      console.log(`✅ Credentials validated for project: ${result.projectKey}`);
+      res.json({
+        valid: true,
+        projectKey: result.projectKey,
+        toolCount: result.toolCount,
+        toolNames: result.toolNames,
+      });
+    } else {
+      console.log("❌ Credential validation failed:", result.error);
+      res.status(400).json({
+        valid: false,
+        error: result.error,
+        errorType: result.errorType,
+      });
+    }
+  } catch (error) {
+    console.error("❌ Credential validation error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Get MCP status endpoint
+app.get("/api/commercetools/status", (req, res) => {
+  const status = mcpCredentialManager.getStatus();
+  res.json({
+    connections: status,
+    connectionCount: Object.keys(status).length,
+  });
+});
+
+// Debug endpoint to test MCP tools with credentials
+app.post("/api/commercetools/debug", async (req, res) => {
+  console.log("\n🔍 Debug endpoint called");
+  try {
+    const { credentials } = req.body;
+
+    if (!credentials) {
+      return res.status(400).json({ error: "Credentials are required" });
+    }
+
+    console.log("🔐 Testing credentials:", credentials.projectKey);
+
+    // Test 1: Get tools using the credential manager
+    console.log("🧪 Test 1: Getting tools via credential manager");
+    const mcpTools = await mcpCredentialManager.getTools(credentials);
+    console.log("✅ MCP tools received:", Object.keys(mcpTools));
+
+    // Test 2: Get all tools (static + MCP)
+    console.log("🧪 Test 2: Getting all tools");
+    const allTools = await getAllTools(credentials);
+    console.log("✅ All tools:", Object.keys(allTools));
+
+    res.json({
+      success: true,
+      mcpTools: Object.keys(mcpTools),
+      allTools: Object.keys(allTools),
+      mcpToolCount: Object.keys(mcpTools).length,
+      totalToolCount: Object.keys(allTools).length,
+    });
+  } catch (error) {
+    console.error("❌ Debug endpoint error:", error);
+    res.status(500).json({
+      error: error.message,
+      stack: error.stack,
+    });
+  }
+});
+
 // Track last health status
 let lastHealthStatus = "OK";
 
 // Health check endpoint
 app.get("/api/health", (req, res) => {
+  const mcpStatus = mcpCredentialManager.getStatus();
   const currentStatus = {
     status: "OK",
     timestamp: new Date().toISOString(),
+    googleApiStatus: process.env.GOOGLE_API_KEY ? "configured" : "missing",
+    mcpStatus: Object.keys(mcpStatus).length > 0 ? "connected" : "disconnected",
+    mcpConnections: Object.keys(mcpStatus).length,
+    environment: process.env.NODE_ENV || "development",
   };
 
   // Only log if status changes or there's an error
@@ -592,13 +705,22 @@ function startServer(port) {
         `🔄 Data stream endpoint: http://localhost:${actualPort}/api/chat/data-stream`
       );
 
-      // Initialize MCP client and then show available tools
-      initializeMCPClient().then(() => {
-        const allTools = getAllTools();
-        console.log(`🛠️  Available tools: ${Object.keys(allTools).join(", ")}`);
-        console.log("\n⌛ Waiting for requests...\n");
-        console.log("💡 To stop the server and free ports, press Ctrl+C");
-      });
+      // Show available tools at startup
+      getAllTools()
+        .then((allTools) => {
+          console.log(
+            `🛠️  Available tools: ${Object.keys(allTools).join(", ")}`
+          );
+          console.log("\n⌛ Waiting for requests...\n");
+          console.log("💡 To stop the server and free ports, press Ctrl+C");
+        })
+        .catch((error) => {
+          console.log(
+            "🛠️  Available tools: Static tools only (no commercetools)"
+          );
+          console.log("\n⌛ Waiting for requests...\n");
+          console.log("💡 To stop the server and free ports, press Ctrl+C");
+        });
     });
 }
 
