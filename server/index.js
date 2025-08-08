@@ -14,9 +14,8 @@ const {
 const { createGoogleGenerativeAI } = require("@ai-sdk/google");
 const { z } = require("zod");
 const {
-  CommercetoolsMCPClient,
-  MCPCredentialManager,
-} = require("./services/mcp-client-new");
+  CommercetoolsAgentEssentials,
+} = require("@commercetools/agent-essentials/ai-sdk");
 
 // Initialize Google AI client
 const google = createGoogleGenerativeAI({
@@ -25,9 +24,6 @@ const google = createGoogleGenerativeAI({
 
 // Create model instance
 const model = google("gemini-2.0-flash");
-
-// Initialize MCP credential manager for commercetools
-const mcpCredentialManager = new MCPCredentialManager();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -44,39 +40,6 @@ if (!process.env.GOOGLE_API_KEY) {
 
 // Tool definitions
 const tools = {
-  getWeatherInformation: tool({
-    description: "Get the current weather information for a specific city",
-    inputSchema: z.object({
-      city: z.string().describe("The city to get weather for"),
-    }),
-    outputSchema: z.string(),
-    // No execute function - requires human confirmation
-  }),
-
-  getLocalTime: tool({
-    description: "Get the current local time for a specific location",
-    inputSchema: z.object({
-      location: z.string().describe("The location to get time for"),
-    }),
-    outputSchema: z.string(),
-    // Has execute function - no confirmation needed
-    execute: async ({ location }) => {
-      const now = new Date();
-      return `The current time in ${location} is ${now.toLocaleTimeString()}`;
-    },
-  }),
-
-  sendEmail: tool({
-    description: "Send an email to a recipient",
-    inputSchema: z.object({
-      to: z.string().describe("Email recipient"),
-      subject: z.string().describe("Email subject"),
-      body: z.string().describe("Email body content"),
-    }),
-    outputSchema: z.string(),
-    // No execute function - requires human confirmation
-  }),
-
   commercetoolsDocumentation: tool({
     description:
       "Search commercetools documentation for information about APIs, types, endpoints, and guides. Use this when you need specific information about commercetools development, GraphQL schemas, REST APIs, or implementation guidance.",
@@ -170,58 +133,164 @@ const tools = {
       }
     },
   }),
+  read_cart: tool({
+    description: "Read cart information from commercetools",
+    inputSchema: z.object({
+      cartId: z.string().describe("Cart ID to read"),
+    }),
+    outputSchema: z.string(),
+    execute: async ({ cartId }) => {
+      return `Reading cart ${cartId}`;
+    },
+  }),
+  read_products: tool({
+    description: "List products from commercetools",
+    inputSchema: z.object({
+      limit: z
+        .number()
+        .optional()
+        .describe("Maximum number of products to return"),
+    }),
+    outputSchema: z.string(),
+    execute: async ({ limit }) => {
+      return `Listing products (limit: ${limit || "default"})`;
+    },
+  }),
+  read_customers: tool({
+    description: "List customers from commercetools",
+    inputSchema: z.object({
+      limit: z
+        .number()
+        .optional()
+        .describe("Maximum number of customers to return"),
+    }),
+    outputSchema: z.string(),
+    execute: async ({ limit }) => {
+      return `Listing customers (limit: ${limit || "default"})`;
+    },
+  }),
+  read_orders: tool({
+    description: "List orders from commercetools",
+    inputSchema: z.object({
+      limit: z
+        .number()
+        .optional()
+        .describe("Maximum number of orders to return"),
+    }),
+    outputSchema: z.string(),
+    execute: async ({ limit }) => {
+      return `Listing orders (limit: ${limit || "default"})`;
+    },
+  }),
 };
 
-// Function to get all available tools (static + MCP)
+// Function to get all available tools
 async function getAllTools(credentials = null) {
-  let mcpTools = {};
-
   console.log(
     "🔍 getAllTools called with credentials:",
     credentials ? `Project: ${credentials.projectKey}` : "No credentials"
   );
 
-  // If credentials provided, get MCP tools for those credentials
-  if (credentials) {
-    try {
-      console.log("🔄 Getting MCP tools for project:", credentials.projectKey);
-      mcpTools = await mcpCredentialManager.getTools(credentials);
-      console.log(
-        "✅ MCP tools loaded:",
-        Object.keys(mcpTools).length,
-        "tools"
-      );
-    } catch (error) {
-      console.error("❌ Failed to get MCP tools for credentials:", error);
-    }
-  } else {
-    // Try to get default tools from environment if available
-    try {
-      if (
-        process.env.COMMERCETOOLS_CLIENT_ID &&
-        process.env.COMMERCETOOLS_CLIENT_SECRET &&
-        process.env.COMMERCETOOLS_PROJECT_KEY &&
-        process.env.COMMERCETOOLS_AUTH_URL &&
-        process.env.COMMERCETOOLS_API_URL
-      ) {
-        const defaultCredentials = {
-          clientId: process.env.COMMERCETOOLS_CLIENT_ID,
-          clientSecret: process.env.COMMERCETOOLS_CLIENT_SECRET,
-          projectKey: process.env.COMMERCETOOLS_PROJECT_KEY,
-          authUrl: process.env.COMMERCETOOLS_AUTH_URL,
-          apiUrl: process.env.COMMERCETOOLS_API_URL,
-        };
-        mcpTools = await mcpCredentialManager.getTools(defaultCredentials);
-      }
-    } catch (error) {
-      console.error("❌ Failed to get default MCP tools:", error);
-    }
+  // If no credentials provided, only return the documentation tool
+  if (!credentials) {
+    console.log("No credentials provided, returning only documentation tool");
+    return {
+      commercetoolsDocumentation: tools.commercetoolsDocumentation,
+    };
   }
 
-  return {
-    ...tools,
-    ...mcpTools,
-  };
+  // Proceed with credentials
+  try {
+    console.log(
+      "🔄 Getting commercetools tools for project:",
+      credentials.projectKey
+    );
+
+    // Create the agent with credentials
+    const agent = new CommercetoolsAgentEssentials({
+      clientId: credentials.clientId,
+      clientSecret: credentials.clientSecret,
+      projectKey: credentials.projectKey,
+      authUrl: credentials.authUrl,
+      apiUrl: credentials.apiUrl,
+      configuration: {
+        actions: {
+          products: {
+            read: true,
+            create: true,
+            update: true,
+          },
+          cart: {
+            read: true,
+            create: true,
+            update: true,
+          },
+          project: {
+            read: true,
+          },
+          customer: {
+            read: true,
+          },
+          order: {
+            read: true,
+          },
+          category: {
+            read: true,
+          },
+          inventory: {
+            read: true,
+          },
+        },
+      },
+    });
+
+    // Get the tools from the agent
+    const agentTools = agent.getTools();
+    console.log("Agent tools:", Object.keys(agentTools));
+
+    // Debug: Log the structure of the first tool
+    const firstToolName = Object.keys(agentTools)[0];
+    if (firstToolName) {
+      console.log("Example tool structure:", {
+        name: firstToolName,
+        details: agentTools[firstToolName],
+      });
+    }
+
+    // Transform agent tools to match Gemini's format
+    const transformedTools = Object.entries(agentTools).reduce(
+      (acc, [name, agentTool]) => {
+        console.log(`Processing tool ${name}:`, agentTool);
+
+        // Create a new tool with Gemini's expected format
+        acc[name] = tool({
+          description: agentTool.description || `Execute ${name} operation`,
+          inputSchema: agentTool.parameters || z.object({}),
+          outputSchema: z.any(),
+          execute: agentTool.execute,
+        });
+        return acc;
+      },
+      {}
+    );
+
+    // Merge our documentation tool with the transformed agent tools
+    const toolsWithAgent = {
+      commercetoolsDocumentation: tools.commercetoolsDocumentation,
+      ...transformedTools,
+    };
+
+    return toolsWithAgent;
+  } catch (error) {
+    console.error(
+      "❌ Failed to get commercetools tools for credentials:",
+      error
+    );
+    // Return only documentation tool on error
+    return {
+      commercetoolsDocumentation: tools.commercetoolsDocumentation,
+    };
+  }
 }
 
 // Approval constants
@@ -232,20 +301,18 @@ const APPROVAL = {
 
 // Add system message configuration
 const SYSTEM_MESSAGES = {
-  DEFAULT: `You are a helpful AI assistant with access to various tools. You can help users by:
-- Getting weather information for cities
-- Checking local time in different locations
-- Sending emails (with user approval)
-- Searching commercetools documentation for development guidance, API references, and implementation help
-- Accessing live commercetools APIs for comprehensive e-commerce operations including:
-  * Reading and managing products, categories, and product types
-  * Managing customer data and customer groups
-  * Handling carts, orders, and quotes
-  * Working with inventory and pricing
-  * Managing discounts and promotions
-  * Reading project and store information
+  DEFAULT: `You are a helpful AI assistant with access to commercetools tools. You can help users by:
 
-When you use commercetools tools:
+1. Searching commercetools documentation for development guidance, API references, and implementation help
+2. Accessing live commercetools APIs for comprehensive e-commerce operations including:
+   * Reading and managing products, categories, and product types
+   * Managing customer data and customer groups
+   * Handling carts, orders, and quotes
+   * Working with inventory and pricing
+   * Managing discounts and promotions
+   * Reading project and store information
+
+When using these tools:
 1. Use the documentation search tool for finding guides, API references, and implementation examples
 2. Use the live API tools to access real-time data from a commercetools project
 3. Always explain what data you're retrieving and why it's relevant to the user's question
@@ -253,15 +320,6 @@ When you use commercetools tools:
 5. For complex operations, break them down into logical steps
 
 Always be polite and professional in your responses.`,
-
-  SUMMARIZE: `Please provide a brief summary of the conversation so far, focusing on:
-- Key topics discussed
-- Tools used and their outcomes
-- Any important decisions or conclusions reached
-
-End your summary with "Okay."
-
-Okay.`,
 };
 
 // Function to ensure system message is properly formatted
@@ -270,41 +328,6 @@ const createSystemMessage = (content) => ({
   role: "system",
   parts: [{ type: "text", text: content }],
 });
-
-// Function to generate conversation summary
-const generateConversationSummary = async (messages) => {
-  try {
-    // Filter out system messages and tool calls for the summary
-    const relevantMessages = messages.filter(
-      (m) => m.role !== "system" && m.parts?.some((p) => p.type === "text")
-    );
-
-    if (relevantMessages.length === 0) return null;
-
-    // Create a summary prompt
-    const summaryMessages = [
-      { role: "system", content: SYSTEM_MESSAGES.SUMMARIZE },
-      ...relevantMessages.map((m) => ({
-        role: m.role,
-        content: m.parts
-          .filter((p) => p.type === "text")
-          .map((p) => p.text)
-          .join(" "),
-      })),
-    ];
-
-    // Get summary from the model
-    const result = await model.generateText({
-      messages: summaryMessages,
-      maxTokens: 150,
-    });
-
-    return result.text;
-  } catch (error) {
-    console.error("Failed to generate summary:", error);
-    return null;
-  }
-};
 
 // Utility function to process tool calls requiring human confirmation
 async function processToolCalls(messages, writer) {
@@ -416,60 +439,11 @@ async function processToolCalls(messages, writer) {
   return [...messages.slice(0, -1), { ...lastMessage, parts: processedParts }];
 }
 
-// Text stream endpoint (basic streaming)
-app.post("/api/chat/text-stream", async (req, res) => {
-  console.log("\n📡 Received text stream request");
-  try {
-    const { messages } = req.body;
-    console.log(`📥 Received ${messages.length} messages`);
-    console.log("📝 Last message:", messages[messages.length - 1]);
-
-    console.log("🤖 Initializing text stream with model");
-    const { commercetoolsCredentials } = req.body;
-    const allTools = await getAllTools(commercetoolsCredentials);
-    const result = streamText({
-      model: model,
-      messages: convertToModelMessages(messages),
-      tools: allTools,
-      maxSteps: 5,
-    });
-
-    // Set headers for streaming
-    console.log("📤 Setting up stream headers");
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Transfer-Encoding", "chunked");
-
-    console.log("🔄 Starting text stream");
-    const stream = result.toTextStream();
-
-    let chunkCount = 0;
-    for await (const chunk of stream) {
-      chunkCount++;
-      console.log(
-        `📦 Streaming chunk #${chunkCount}: ${chunk.slice(0, 50)}${
-          chunk.length > 50 ? "..." : ""
-        }`
-      );
-      res.write(chunk);
-    }
-
-    console.log(`✅ Stream completed - sent ${chunkCount} chunks`);
-    res.end();
-  } catch (error) {
-    console.error("❌ Text stream error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
 // Data stream endpoint (UI message stream with human-in-the-loop)
 app.post("/api/chat/data-stream", async (req, res) => {
   console.log("\n📡 Received data stream request");
   try {
-    const {
-      messages,
-      includeSummary = false,
-      commercetoolsCredentials,
-    } = req.body;
+    const { messages, commercetoolsCredentials } = req.body;
     console.log("req.body", req.body);
     console.log(`📥 Received ${messages.length} messages`);
     console.log("📝 Last message:", messages[messages.length - 1]);
@@ -489,23 +463,10 @@ app.post("/api/chat/data-stream", async (req, res) => {
 
       // Enhance system message if commercetools credentials are provided
       if (commercetoolsCredentials) {
-        systemMessage += `\n\nIMPORTANT: You are currently connected to commercetools project "${commercetoolsCredentials.projectKey}" and have access to live commercetools MCP tools. You can directly access products, orders, customers, carts, categories, and inventory data for this project. Use these tools to answer questions about the user's commercetools data.`;
+        systemMessage += `\n\nIMPORTANT: You are currently connected to commercetools project "${commercetoolsCredentials.projectKey}" and have access to live commercetools tools. You can directly access products, orders, customers, carts, categories, and inventory data for this project. Use these tools to answer questions about the user's commercetools data.`;
       }
 
       processedMessages = [createSystemMessage(systemMessage), ...messages];
-    }
-
-    // Generate summary if requested and conversation is long enough
-    if (includeSummary && messages.length > 5) {
-      const summary = await generateConversationSummary(messages);
-      if (summary) {
-        processedMessages = [
-          ...processedMessages,
-          createSystemMessage(
-            `Summary so far: ${summary}\n\nPlease continue the conversation and remember to end with "Okay."`
-          ),
-        ];
-      }
     }
 
     // Ensure the system message is included in model messages
@@ -582,22 +543,38 @@ app.post("/api/commercetools/validate", async (req, res) => {
       return res.status(400).json({ error: "Credentials are required" });
     }
 
-    const result = await mcpCredentialManager.validateCredentials(credentials);
+    try {
+      // Try to create an agent instance to validate credentials
+      const agent = new CommercetoolsAgentEssentials({
+        clientId: credentials.clientId,
+        clientSecret: credentials.clientSecret,
+        projectKey: credentials.projectKey,
+        authUrl: credentials.authUrl,
+        apiUrl: credentials.apiUrl,
+        configuration: {
+          actions: {
+            products: {
+              read: true,
+            },
+          },
+        },
+      });
 
-    if (result.valid) {
-      console.log(`✅ Credentials validated for project: ${result.projectKey}`);
+      const tools = agent.getTools();
+      console.log(
+        `✅ Credentials validated for project: ${credentials.projectKey}`
+      );
       res.json({
         valid: true,
-        projectKey: result.projectKey,
-        toolCount: result.toolCount,
-        toolNames: result.toolNames,
+        projectKey: credentials.projectKey,
+        toolCount: Object.keys(tools).length,
+        toolNames: Object.keys(tools),
       });
-    } else {
-      console.log("❌ Credential validation failed:", result.error);
+    } catch (error) {
+      console.log("❌ Credential validation failed:", error);
       res.status(400).json({
         valid: false,
-        error: result.error,
-        errorType: result.errorType,
+        error: error.message,
       });
     }
   } catch (error) {
@@ -606,65 +583,15 @@ app.post("/api/commercetools/validate", async (req, res) => {
   }
 });
 
-// Get MCP status endpoint
-app.get("/api/commercetools/status", (req, res) => {
-  const status = mcpCredentialManager.getStatus();
-  res.json({
-    connections: status,
-    connectionCount: Object.keys(status).length,
-  });
-});
-
-// Debug endpoint to test MCP tools with credentials
-app.post("/api/commercetools/debug", async (req, res) => {
-  console.log("\n🔍 Debug endpoint called");
-  try {
-    const { credentials } = req.body;
-
-    if (!credentials) {
-      return res.status(400).json({ error: "Credentials are required" });
-    }
-
-    console.log("🔐 Testing credentials:", credentials.projectKey);
-
-    // Test 1: Get tools using the credential manager
-    console.log("🧪 Test 1: Getting tools via credential manager");
-    const mcpTools = await mcpCredentialManager.getTools(credentials);
-    console.log("✅ MCP tools received:", Object.keys(mcpTools));
-
-    // Test 2: Get all tools (static + MCP)
-    console.log("🧪 Test 2: Getting all tools");
-    const allTools = await getAllTools(credentials);
-    console.log("✅ All tools:", Object.keys(allTools));
-
-    res.json({
-      success: true,
-      mcpTools: Object.keys(mcpTools),
-      allTools: Object.keys(allTools),
-      mcpToolCount: Object.keys(mcpTools).length,
-      totalToolCount: Object.keys(allTools).length,
-    });
-  } catch (error) {
-    console.error("❌ Debug endpoint error:", error);
-    res.status(500).json({
-      error: error.message,
-      stack: error.stack,
-    });
-  }
-});
-
 // Track last health status
 let lastHealthStatus = "OK";
 
 // Health check endpoint
 app.get("/api/health", (req, res) => {
-  const mcpStatus = mcpCredentialManager.getStatus();
   const currentStatus = {
     status: "OK",
     timestamp: new Date().toISOString(),
     googleApiStatus: process.env.GOOGLE_API_KEY ? "configured" : "missing",
-    mcpStatus: Object.keys(mcpStatus).length > 0 ? "connected" : "disconnected",
-    mcpConnections: Object.keys(mcpStatus).length,
     environment: process.env.NODE_ENV || "development",
   };
 
@@ -698,9 +625,6 @@ function startServer(port) {
       const actualPort = server.address().port;
       console.log("\n🚀 Server initialization:");
       console.log(`📡 Server running on http://localhost:${actualPort}`);
-      console.log(
-        `💬 Text stream endpoint: http://localhost:${actualPort}/api/chat/text-stream`
-      );
       console.log(
         `🔄 Data stream endpoint: http://localhost:${actualPort}/api/chat/data-stream`
       );
@@ -743,14 +667,6 @@ const gracefulShutdown = async (signal) => {
         });
       });
     }
-
-    // Disconnect MCP client
-    await mcpClient.disconnect();
-    console.log("✅ MCP client disconnected");
-
-    // Force kill any remaining MCP processes
-    const { spawn } = require("child_process");
-    spawn("pkill", ["-f", "mcp-essentials"], { stdio: "ignore" });
 
     console.log("✅ Graceful shutdown complete");
     process.exit(0);
