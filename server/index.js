@@ -23,14 +23,24 @@ const google = createGoogleGenerativeAI({
 });
 
 // Create model instance
-const model = google("gemini-2.0-flash");
+const { wrapLanguageModel } = require("ai");
+const createPIIMiddleware = require("./middleware/piiLanguageModelMiddleware");
+
+// Create base model
+const baseModel = google("gemini-2.0-flash");
+
+// Wrap model with PII middleware
+const model = wrapLanguageModel({
+  model: baseModel,
+  middleware: createPIIMiddleware(),
+});
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: "50mb" })); // Increase payload limit for large responses
+app.use(express.json({ limit: "50mb" }));
 
 // Validate API key
 if (!process.env.GOOGLE_API_KEY) {
