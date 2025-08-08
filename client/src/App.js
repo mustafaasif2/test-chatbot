@@ -17,6 +17,16 @@ import {
   Settings,
   Check,
   X,
+  ShoppingCart,
+  Package,
+  Building,
+  User,
+  FileText,
+  FolderTree,
+  Box,
+  Plus,
+  Edit,
+  RefreshCw as RefreshIcon,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -38,9 +48,33 @@ const APPROVAL = {
 };
 
 // Tools that require human confirmation
-const TOOLS_REQUIRING_CONFIRMATION = ["getWeatherInformation", "sendEmail"];
+const TOOLS_REQUIRING_CONFIRMATION = [
+  "read_cart",
+  "create_cart",
+  "replicate_cart",
+  "update_cart",
+  "read_category",
+  "read_customer",
+  "read_order",
+  "read_inventory",
+  "list_products",
+  "create_product",
+  "update_product",
+  "read_project",
+];
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:3001";
+
+const examplePrompts = [
+  "List the first 5 products in my catalog",
+  "Show me my project settings",
+  "Find all products in the 'Electronics' category",
+  "Show me the details of my latest order",
+  "Check inventory levels for product SKU 'starter-motor'",
+  "Create a new cart with 2 items",
+  "Show me customer details for a specific customer",
+  "List all categories in my project",
+];
 
 function App() {
   const [serverStatus, setServerStatus] = useState("connecting");
@@ -84,10 +118,11 @@ function App() {
     });
   }, []); // Only create once, but use ref for current credentials
 
-  const { messages, sendMessage, addToolResult, isLoading } = useChat({
-    transport,
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-  });
+  const { messages, sendMessage, addToolResult, isLoading, setMessages } =
+    useChat({
+      transport,
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    });
 
   // Auto-scroll to bottom when messages change
   const scrollToBottom = () => {
@@ -181,54 +216,34 @@ function App() {
     setCredentialError(null);
   };
 
-  // Debug function to test MCP tools
-  const debugMCPTools = async () => {
-    if (!commercetoolsCredentials) {
-      alert("Please set up credentials first");
-      return;
-    }
-
-    try {
-      console.log("🔍 Testing MCP tools...");
-      const response = await fetch(`${API_URL}/api/commercetools/debug`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ credentials: commercetoolsCredentials }),
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        console.log("✅ MCP Debug Results:", result);
-        alert(
-          `Debug Success!\n\nMCP Tools: ${result.mcpToolCount}\nTotal Tools: ${
-            result.totalToolCount
-          }\n\nTools: ${result.allTools.join(", ")}`
-        );
-      } else {
-        console.error("❌ Debug failed:", result);
-        alert(`Debug Failed: ${result.error}`);
-      }
-    } catch (error) {
-      console.error("❌ Debug error:", error);
-      alert(`Debug Error: ${error.message}`);
-    }
-  };
-
   const getToolIcon = (toolName) => {
     switch (toolName) {
-      case "getWeatherInformation":
-        return <Cloud size={16} />;
-      case "sendEmail":
-        return <Mail size={16} />;
-      case "getLocalTime":
-        return <Clock size={16} />;
+      case "read_cart":
+        return <ShoppingCart size={16} />;
+      case "read_products":
+        return <Package size={16} />;
+      case "read_project":
+        return <Building size={16} />;
+      case "read_customer":
+        return <User size={16} />;
+      case "read_order":
+        return <FileText size={16} />;
+      case "read_category":
+        return <FolderTree size={16} />;
+      case "read_inventory":
+        return <Box size={16} />;
+      case "create_cart":
+        return <Plus size={16} />;
+      case "create_products":
+        return <Plus size={16} />;
+      case "update_cart":
+        return <Edit size={16} />;
+      case "update_products":
+        return <Edit size={16} />;
       case "commercetoolsDocumentation":
         return <Book size={16} />;
       default:
-        return null;
+        return <Settings size={16} />;
     }
   };
 
@@ -303,17 +318,6 @@ function App() {
         return "Connecting...";
     }
   };
-
-  const examplePrompts = [
-    "What's the weather like in New York?",
-    "Get the current time in London",
-    "Send an email to john@example.com with subject 'Meeting' and body 'Let's meet tomorrow'",
-    "How do I work with product variants in commercetools?",
-    "Show me commercetools GraphQL setup documentation",
-    "What are the cart API endpoints in commercetools?",
-    "List products for my project",
-    "Show me the orders for this project",
-  ];
 
   // Credentials Form Component
   const CredentialsForm = () => {
@@ -447,16 +451,35 @@ function App() {
 
   const getToolDisplayName = (toolName) => {
     switch (toolName) {
-      case "getWeatherInformation":
-        return "Weather Request";
-      case "getLocalTime":
-        return "Time Request";
+      case "read_cart":
+        return "Read Cart";
+      case "read_products":
+        return "Read Products";
+      case "read_project":
+        return "Read Project";
+      case "read_customer":
+        return "Read Customer";
+      case "read_order":
+        return "Read Order";
+      case "read_category":
+        return "Read Category";
+      case "read_inventory":
+        return "Read Inventory";
+      case "create_cart":
+        return "Create Cart";
+      case "create_products":
+        return "Create Products";
+      case "update_cart":
+        return "Update Cart";
+      case "update_products":
+        return "Update Products";
       case "commercetoolsDocumentation":
         return "Commercetools Documentation";
-      case "sendEmail":
-        return "Email Request";
       default:
-        return toolName;
+        return toolName
+          .split("_")
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ");
     }
   };
 
@@ -518,11 +541,57 @@ function App() {
       const toolName = getToolName(part);
       const toolCallId = part.toolCallId;
 
+      // Handle tool output display
+      if (part.state === "output-available") {
+        try {
+          // Try to parse as JSON for better formatting
+          const output = JSON.parse(part.output);
+          return (
+            <Card key={toolCallId} theme="info" type="raised">
+              <Spacings.Stack scale="s">
+                <Spacings.Inline scale="xs" alignItems="center">
+                  {getToolIcon(toolName)}
+                  <Text.Subheadline as="h4" tone="primary">
+                    {getToolDisplayName(toolName)} Result
+                  </Text.Subheadline>
+                </Spacings.Inline>
+                <div
+                  className="markdown-code-block"
+                  style={{ maxHeight: "400px", overflow: "auto" }}
+                >
+                  <pre style={{ margin: 0 }}>
+                    {JSON.stringify(output, null, 2)}
+                  </pre>
+                </div>
+              </Spacings.Stack>
+            </Card>
+          );
+        } catch (e) {
+          // If not JSON, display as regular text
+          return (
+            <Card key={toolCallId} theme="info" type="raised">
+              <Spacings.Stack scale="s">
+                <Spacings.Inline scale="xs" alignItems="center">
+                  {getToolIcon(toolName)}
+                  <Text.Subheadline as="h4" tone="primary">
+                    {getToolDisplayName(toolName)} Result
+                  </Text.Subheadline>
+                </Spacings.Inline>
+                <Text.Detail tone="primary">{part.output}</Text.Detail>
+              </Spacings.Stack>
+            </Card>
+          );
+        }
+      }
+
       // Render confirmation UI for tools requiring human approval
       if (
         TOOLS_REQUIRING_CONFIRMATION.includes(toolName) &&
         part.state === "input-available"
       ) {
+        // Extract input without credentials for display
+        const { credentials, ...inputWithoutCredentials } = part.input;
+
         return (
           <Card key={toolCallId} theme="info" type="raised">
             <Spacings.Stack scale="s">
@@ -532,12 +601,47 @@ function App() {
                   {getToolDisplayName(toolName)}
                 </Text.Subheadline>
               </Spacings.Inline>
+
               <Text.Caption tone="secondary">
                 Requires your confirmation:
               </Text.Caption>
+
+              {/* Show project info if credentials are present */}
+              {credentials && (
+                <Card theme="light" type="flat">
+                  <Spacings.Stack scale="xs">
+                    <Text.Caption tone="secondary">Project:</Text.Caption>
+                    <Text.Detail tone="primary">
+                      {credentials.projectKey}
+                    </Text.Detail>
+                  </Spacings.Stack>
+                </Card>
+              )}
+
+              {/* Show input parameters without credentials */}
               <Card theme="light" type="flat">
-                <Text.Detail>{JSON.stringify(part.input, null, 2)}</Text.Detail>
+                <Spacings.Stack scale="xs">
+                  <Text.Caption tone="secondary">Parameters:</Text.Caption>
+                  <Text.Detail>
+                    {Object.keys(inputWithoutCredentials).length > 0
+                      ? JSON.stringify(inputWithoutCredentials, null, 2)
+                      : "No additional parameters"}
+                  </Text.Detail>
+                </Spacings.Stack>
               </Card>
+
+              {/* Warning for write operations */}
+              {toolName.startsWith("create_") ||
+              toolName.startsWith("update_") ? (
+                <Card theme="warning" type="flat">
+                  <Spacings.Inline scale="xs" alignItems="center">
+                    <Text.Detail tone="warning">
+                      ⚠️ This operation will modify data in your project
+                    </Text.Detail>
+                  </Spacings.Inline>
+                </Card>
+              ) : null}
+
               <Spacings.Inline scale="s" justifyContent="flex-end">
                 <SecondaryButton
                   label="Deny"
@@ -553,6 +657,12 @@ function App() {
                     handleToolConfirmation(toolCallId, toolName, true)
                   }
                   size="medium"
+                  tone={
+                    toolName.startsWith("create_") ||
+                    toolName.startsWith("update_")
+                      ? "warning"
+                      : "primary"
+                  }
                 />
               </Spacings.Inline>
             </Spacings.Stack>
@@ -654,15 +764,20 @@ function App() {
                 tone={credentialStatus === "valid" ? "secondary" : "primary"}
               />
 
+              {messages.length > 0 && (
+                <SecondaryButton
+                  iconLeft={<RefreshIcon size={16} />}
+                  label="Restart"
+                  onClick={() => {
+                    setMessages([]);
+                    setInput("");
+                  }}
+                  size="small"
+                  tone="secondary"
+                />
+              )}
               {credentialStatus === "valid" && (
                 <>
-                  <SecondaryButton
-                    iconLeft={<Settings size={16} />}
-                    label="Debug"
-                    onClick={debugMCPTools}
-                    size="small"
-                    tone="info"
-                  />
                   <SecondaryButton
                     iconLeft={<X size={16} />}
                     label="Clear"
@@ -696,17 +811,48 @@ function App() {
             />
             {isExamplesExpanded && (
               <div className="examples-collapse">
-                <div className="compact-examples-grid">
-                  {examplePrompts.map((prompt, index) => (
-                    <SecondaryButton
-                      key={index}
-                      label={prompt}
-                      onClick={() => setInput(prompt)}
-                      size="small"
-                      tone="secondary"
-                    />
-                  ))}
-                </div>
+                <Spacings.Stack scale="xs">
+                  <Text.Caption tone="secondary">Example queries:</Text.Caption>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(3, 1fr)",
+                      gap: "4px",
+                      width: "100%",
+                      maxWidth: "100%",
+                      overflow: "hidden",
+                      padding: "4px 0",
+                    }}
+                  >
+                    {examplePrompts.map((prompt, index) => (
+                      <SecondaryButton
+                        key={index}
+                        label={
+                          <Text.Caption
+                            tone="secondary"
+                            style={{ fontSize: "10px", lineHeight: "1.1" }}
+                          >
+                            {prompt}
+                          </Text.Caption>
+                        }
+                        onClick={() => setInput(prompt)}
+                        size="small"
+                        tone="secondary"
+                        style={{
+                          padding: "2px 6px",
+                          minHeight: "20px",
+                          width: "100%",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          border: "1px solid var(--border-color-subtle)",
+                          background: "var(--surface-quiet)",
+                          borderRadius: "4px",
+                        }}
+                      />
+                    ))}
+                  </div>
+                </Spacings.Stack>
               </div>
             )}
           </Spacings.Stack>
@@ -718,9 +864,9 @@ function App() {
 
       {/* Messages */}
       <Card theme="light" type="raised" className="messages-container">
+        {/* Chat Header */}
         {messages.length === 0 ? (
           <Spacings.Stack scale="l" alignItems="center">
-            <Text.Subheadline as="h2">Start a conversation</Text.Subheadline>
             <Text.Caption tone="secondary">
               Data stream protocol supports human-in-the-loop for tool calls
             </Text.Caption>

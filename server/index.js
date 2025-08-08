@@ -257,18 +257,29 @@ async function getAllTools(credentials = null) {
       });
     }
 
-    // Transform agent tools to match Gemini's format
+    // Transform agent tools to match Gemini's format and remove execute functions
     const transformedTools = Object.entries(agentTools).reduce(
       (acc, [name, agentTool]) => {
         console.log(`Processing tool ${name}:`, agentTool);
 
-        // Create a new tool with Gemini's expected format
-        acc[name] = tool({
+        // Create a new tool with Gemini's expected format, but without execute function
+        // This forces human-in-the-loop for all commercetools operations
+        const toolDefinition = {
           description: agentTool.description || `Execute ${name} operation`,
-          inputSchema: agentTool.parameters || z.object({}),
+          inputSchema: z.object({
+            ...(agentTool.parameters?._def?.shape() || {}),
+            credentials: z.object({
+              clientId: z.string(),
+              clientSecret: z.string(),
+              projectKey: z.string(),
+              authUrl: z.string(),
+              apiUrl: z.string(),
+            }),
+          }),
           outputSchema: z.any(),
-          execute: agentTool.execute,
-        });
+        };
+
+        acc[name] = tool(toolDefinition);
         return acc;
       },
       {}
@@ -293,7 +304,7 @@ async function getAllTools(credentials = null) {
   }
 }
 
-// Approval constants
+// Approval constants - used for human-in-the-loop functionality
 const APPROVAL = {
   YES: "Yes, confirmed.",
   NO: "No, denied.",
@@ -330,7 +341,7 @@ const createSystemMessage = (content) => ({
 });
 
 // Utility function to process tool calls requiring human confirmation
-async function processToolCalls(messages, writer) {
+async function processToolCalls(messages, writer, commercetoolsCredentials) {
   console.log("\n🔍 Processing tool calls...");
   const lastMessage = messages[messages.length - 1];
   if (!lastMessage || !lastMessage.parts) {
@@ -341,22 +352,15 @@ async function processToolCalls(messages, writer) {
   console.log(`📝 Processing ${lastMessage.parts.length} message parts`);
 
   const processedParts = await Promise.all(
-    lastMessage.parts.map(async (part, index) => {
-      console.log(
-        `\n🔄 Processing part ${index + 1}/${lastMessage.parts.length}`
-      );
-
+    lastMessage.parts.map(async (part) => {
       if (!isToolUIPart(part)) {
-        console.log("📜 Regular text part - no tool processing needed");
         return part;
       }
-
-      console.log("Part:", part);
 
       const toolName = getToolName(part);
       console.log(`🛠️  Tool identified: ${toolName}`);
 
-      // Only process tools that require confirmation and are in output-available state
+      // Only process tools that are in output-available state
       if (part.state !== "output-available") {
         console.log(
           `⏳ Tool state is ${part.state} - waiting for confirmation`
@@ -368,74 +372,60 @@ async function processToolCalls(messages, writer) {
 
       if (part.output === APPROVAL.YES) {
         console.log("✅ User approved tool execution");
-        const inputToUse = part.input;
+        try {
+          // Use credentials from the request, not from the tool input
+          const agent = new CommercetoolsAgentEssentials({
+            clientId: commercetoolsCredentials.clientId,
+            clientSecret: commercetoolsCredentials.clientSecret,
+            projectKey: commercetoolsCredentials.projectKey,
+            authUrl: commercetoolsCredentials.authUrl,
+            apiUrl: commercetoolsCredentials.apiUrl,
+            configuration: {
+              actions: {
+                products: { read: true, create: true, update: true },
+                cart: { read: true, create: true, update: true },
+                project: { read: true },
+                customer: { read: true },
+                order: { read: true },
+                category: { read: true },
+                inventory: { read: true },
+              },
+            },
+          });
 
-        // Execute the tool based on tool name
-        switch (toolName) {
-          case "getWeatherInformation":
-            console.log(`🌤️  Getting weather for city: ${inputToUse.city}`);
-            const weatherConditions = [
-              "sunny",
-              "cloudy",
-              "rainy",
-              "snowy",
-              "partly cloudy",
-            ];
-            const randomWeather =
-              weatherConditions[
-                Math.floor(Math.random() * weatherConditions.length)
-              ];
-            result = `The weather in ${
-              inputToUse.city
-            } is currently ${randomWeather}. Temperature is around ${
-              Math.floor(Math.random() * 30) + 10
-            }°C.`;
-            console.log(`📊 Generated weather result: ${result}`);
-            break;
+          const agentTools = agent.getTools();
+          const toolToExecute = agentTools[toolName];
 
-          case "sendEmail":
-            console.log(`📧 Sending email to: ${inputToUse.to}`);
-            result = `Email sent successfully to ${inputToUse.to} with subject: "${inputToUse.subject}"`;
-            console.log(`📨 Email result: ${result}`);
-            break;
-
-          default:
-            // Check if it's an MCP tool
-            if (mcpTools[toolName]) {
-              console.log(`🔧 Executing MCP tool: ${toolName}`);
-              try {
-                result = await mcpClient.callTool(toolName, inputToUse);
-                console.log(`✅ MCP tool ${toolName} executed successfully`);
-              } catch (error) {
-                console.error(`❌ MCP tool ${toolName} failed:`, error);
-                result = `Error executing ${toolName}: ${error.message}`;
-              }
-            } else {
-              console.log(`❌ Unknown tool: ${toolName}`);
-              result = "Error: Unknown tool";
-            }
+          if (toolToExecute && toolToExecute.execute) {
+            // Remove credentials from input before executing
+            const { credentials, ...inputWithoutCredentials } = part.input;
+            result = await toolToExecute.execute(inputWithoutCredentials);
+          } else {
+            result = `Error: Tool ${toolName} not found or not executable`;
+          }
+        } catch (error) {
+          console.error("❌ Tool execution failed:", error);
+          result = `Error executing tool: ${error.message}`;
         }
       } else if (part.output === APPROVAL.NO) {
         console.log("❌ User denied tool execution");
-        result = `Error: User denied execution of ${toolName}`;
+        result = "Error: User denied tool execution";
       } else {
-        console.log("⏳ Waiting for user approval/denial");
         return part;
       }
 
-      // Send updated tool result to client
-      console.log("📤 Sending tool result to client");
+      // Forward updated tool result to the client
       writer.write({
         type: "tool-output-available",
         toolCallId: part.toolCallId,
         output: result,
       });
 
+      // Update the message part
       return { ...part, output: result };
     })
   );
 
-  console.log("\n✅ Finished processing all tool calls");
   return [...messages.slice(0, -1), { ...lastMessage, parts: processedParts }];
 }
 
@@ -476,7 +466,8 @@ app.post("/api/chat/data-stream", async (req, res) => {
         console.log("🛠️  Processing pending tool calls");
         const processedWithTools = await processToolCalls(
           processedMessages,
-          writer
+          writer,
+          commercetoolsCredentials
         );
 
         // Convert messages for the model, ensuring system message is preserved
@@ -493,7 +484,7 @@ app.post("/api/chat/data-stream", async (req, res) => {
           model: model,
           messages: modelMessages,
           tools: allTools,
-          maxSteps: 5,
+          maxSteps: 20,
         });
 
         console.log("🔄 Merging UI message stream");
