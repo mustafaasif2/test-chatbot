@@ -238,7 +238,7 @@ async function getAllTools(credentials = null) {
       configuration: {
         actions: {
           products: { read: true, create: true, update: true },
-          cart: { read: true, create: true, update: true },
+          cart: { read: true },
           project: { read: true },
           customer: { read: true },
           order: { read: true },
@@ -401,7 +401,7 @@ async function processToolCalls(messages, writer, commercetoolsCredentials) {
             configuration: {
               actions: {
                 products: { read: true, create: true, update: true },
-                cart: { read: true, create: true, update: true },
+                cart: { read: true },
                 project: { read: true },
                 customer: { read: true },
                 order: { read: true },
@@ -503,6 +503,9 @@ app.post("/api/chat/data-stream", async (req, res) => {
           messages: modelMessages,
           tools: allTools,
           maxSteps: 20,
+          system: `You are a helpful assistant with access to commercetools tools.
+            When you receive tool results, explain them in a natural way.
+            Focus on the key information and insights from the data.`,
         });
 
         console.log("🔄 Merging UI message stream");
@@ -602,7 +605,7 @@ app.post("/api/commercetools/validate", async (req, res) => {
         configuration: {
           actions: {
             products: { read: true, create: true, update: true },
-            cart: { read: true, create: true, update: true },
+            cart: { read: true },
             project: { read: true },
             customer: { read: true },
             order: { read: true },
