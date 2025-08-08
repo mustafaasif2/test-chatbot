@@ -208,38 +208,32 @@ async function getAllTools(credentials = null) {
 
     // Create the agent with credentials
     const agent = new CommercetoolsAgentEssentials({
-      clientId: credentials.clientId,
-      clientSecret: credentials.clientSecret,
-      projectKey: credentials.projectKey,
-      authUrl: credentials.authUrl,
-      apiUrl: credentials.apiUrl,
+      authConfig:
+        credentials.authType === "client_credentials"
+          ? {
+              type: "client_credentials",
+              clientId: credentials.clientId,
+              clientSecret: credentials.clientSecret,
+              projectKey: credentials.projectKey,
+              authUrl: credentials.authUrl,
+              apiUrl: credentials.apiUrl,
+            }
+          : {
+              type: "auth_token",
+              accessToken: credentials.accessToken,
+              projectKey: credentials.projectKey,
+              authUrl: credentials.authUrl,
+              apiUrl: credentials.apiUrl,
+            },
       configuration: {
         actions: {
-          products: {
-            read: true,
-            create: true,
-            update: true,
-          },
-          cart: {
-            read: true,
-            create: true,
-            update: true,
-          },
-          project: {
-            read: true,
-          },
-          customer: {
-            read: true,
-          },
-          order: {
-            read: true,
-          },
-          category: {
-            read: true,
-          },
-          inventory: {
-            read: true,
-          },
+          products: { read: true, create: true, update: true },
+          cart: { read: true, create: true, update: true },
+          project: { read: true },
+          customer: { read: true },
+          order: { read: true },
+          category: { read: true },
+          inventory: { read: true },
         },
       },
     });
@@ -269,11 +263,13 @@ async function getAllTools(credentials = null) {
           inputSchema: z.object({
             ...(agentTool.parameters?._def?.shape() || {}),
             credentials: z.object({
-              clientId: z.string(),
-              clientSecret: z.string(),
+              authType: z.enum(["client_credentials", "auth_token"]),
               projectKey: z.string(),
               authUrl: z.string(),
               apiUrl: z.string(),
+              clientId: z.string().optional(),
+              clientSecret: z.string().optional(),
+              accessToken: z.string().optional(),
             }),
           }),
           outputSchema: z.any(),
@@ -375,11 +371,23 @@ async function processToolCalls(messages, writer, commercetoolsCredentials) {
         try {
           // Use credentials from the request, not from the tool input
           const agent = new CommercetoolsAgentEssentials({
-            clientId: commercetoolsCredentials.clientId,
-            clientSecret: commercetoolsCredentials.clientSecret,
-            projectKey: commercetoolsCredentials.projectKey,
-            authUrl: commercetoolsCredentials.authUrl,
-            apiUrl: commercetoolsCredentials.apiUrl,
+            authConfig:
+              commercetoolsCredentials.authType === "client_credentials"
+                ? {
+                    type: "client_credentials",
+                    clientId: commercetoolsCredentials.clientId,
+                    clientSecret: commercetoolsCredentials.clientSecret,
+                    projectKey: commercetoolsCredentials.projectKey,
+                    authUrl: commercetoolsCredentials.authUrl,
+                    apiUrl: commercetoolsCredentials.apiUrl,
+                  }
+                : {
+                    type: "auth_token",
+                    accessToken: commercetoolsCredentials.accessToken,
+                    projectKey: commercetoolsCredentials.projectKey,
+                    authUrl: commercetoolsCredentials.authUrl,
+                    apiUrl: commercetoolsCredentials.apiUrl,
+                  },
             configuration: {
               actions: {
                 products: { read: true, create: true, update: true },
@@ -529,24 +537,67 @@ app.post("/api/commercetools/validate", async (req, res) => {
   console.log("\n📡 Received credential validation request");
   try {
     const { credentials } = req.body;
+    console.log("Received credentials:", JSON.stringify(credentials, null, 2));
 
     if (!credentials) {
       return res.status(400).json({ error: "Credentials are required" });
     }
 
     try {
+      // Validate required fields based on auth type
+      const requiredFields = ["projectKey", "authType"];
+      if (credentials.authType === "client_credentials") {
+        requiredFields.push("clientId", "clientSecret");
+      } else if (credentials.authType === "auth_token") {
+        requiredFields.push("accessToken");
+      } else {
+        return res.status(400).json({
+          valid: false,
+          error:
+            "Invalid authentication type. Must be either 'client_credentials' or 'auth_token'",
+          errorType: "INVALID_AUTH_TYPE",
+        });
+      }
+
+      const missingFields = requiredFields.filter(
+        (field) => !credentials[field]
+      );
+      if (missingFields.length > 0) {
+        return res.status(400).json({
+          valid: false,
+          error: `Missing required fields: ${missingFields.join(", ")}`,
+          errorType: "MISSING_FIELDS",
+        });
+      }
+
       // Try to create an agent instance to validate credentials
       const agent = new CommercetoolsAgentEssentials({
-        clientId: credentials.clientId,
-        clientSecret: credentials.clientSecret,
-        projectKey: credentials.projectKey,
-        authUrl: credentials.authUrl,
-        apiUrl: credentials.apiUrl,
+        authConfig:
+          credentials.authType === "client_credentials"
+            ? {
+                type: "client_credentials",
+                clientId: credentials.clientId,
+                clientSecret: credentials.clientSecret,
+                projectKey: credentials.projectKey,
+                authUrl: credentials.authUrl,
+                apiUrl: credentials.apiUrl,
+              }
+            : {
+                type: "auth_token",
+                accessToken: credentials.accessToken,
+                projectKey: credentials.projectKey,
+                authUrl: credentials.authUrl,
+                apiUrl: credentials.apiUrl,
+              },
         configuration: {
           actions: {
-            products: {
-              read: true,
-            },
+            products: { read: true, create: true, update: true },
+            cart: { read: true, create: true, update: true },
+            project: { read: true },
+            customer: { read: true },
+            order: { read: true },
+            category: { read: true },
+            inventory: { read: true },
           },
         },
       });

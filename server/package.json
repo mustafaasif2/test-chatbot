@@ -9,8 +9,8 @@
   },
   "dependencies": {
     "@ai-sdk/google": "^2.0.1",
-    "@commercetools/agent-essentials": "^1.0.0",
-    "@commercetools/mcp-essentials": "^1.0.0",
+    "@commercetools/agent-essentials": "^2.0.0",
+    "@commercetools/mcp-essentials": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.17.1",
     "@prisma/client": "^6.13.0",
     "ai": "^5.0.2",

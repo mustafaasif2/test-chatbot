@@ -197,14 +197,21 @@ function App() {
   // Handle credential form submission
   const handleCredentialsSubmit = async (formData) => {
     const credentials = {
-      clientId: formData.clientId,
-      clientSecret: formData.clientSecret,
+      authType: formData.authType,
       projectKey: formData.projectKey,
       authUrl:
         formData.authUrl || "https://auth.europe-west1.gcp.commercetools.com",
       apiUrl:
         formData.apiUrl || "https://api.europe-west1.gcp.commercetools.com",
     };
+
+    // Add auth type specific fields
+    if (formData.authType === "client_credentials") {
+      credentials.clientId = formData.clientId;
+      credentials.clientSecret = formData.clientSecret;
+    } else if (formData.authType === "auth_token") {
+      credentials.accessToken = formData.accessToken;
+    }
 
     await validateCredentials(credentials);
   };
@@ -322,8 +329,10 @@ function App() {
   // Credentials Form Component
   const CredentialsForm = () => {
     const [formData, setFormData] = useState({
+      authType: "client_credentials",
       clientId: "",
       clientSecret: "",
+      accessToken: "",
       projectKey: "",
       authUrl: "https://auth.europe-west1.gcp.commercetools.com",
       apiUrl: "https://api.europe-west1.gcp.commercetools.com",
@@ -335,7 +344,21 @@ function App() {
     };
 
     const handleChange = (field, value) => {
-      setFormData((prev) => ({ ...prev, [field]: value }));
+      setFormData((prev) => {
+        const newData = { ...prev, [field]: value };
+
+        // Clear irrelevant fields when auth type changes
+        if (field === "authType") {
+          if (value === "client_credentials") {
+            newData.accessToken = "";
+          } else if (value === "auth_token") {
+            newData.clientId = "";
+            newData.clientSecret = "";
+          }
+        }
+
+        return newData;
+      });
     };
 
     return (
@@ -350,22 +373,37 @@ function App() {
 
           <form onSubmit={handleSubmit}>
             <Spacings.Stack scale="s">
-              <TextInput
-                name="clientId"
-                placeholder="Client ID"
-                value={formData.clientId}
-                onChange={(e) => handleChange("clientId", e.target.value)}
-                isRequired
-              />
-
-              <TextInput
-                name="clientSecret"
-                placeholder="Client Secret"
-                value={formData.clientSecret}
-                onChange={(e) => handleChange("clientSecret", e.target.value)}
-                isRequired
-                type="password"
-              />
+              <Spacings.Stack scale="xs">
+                <Text.Detail>Authentication Type</Text.Detail>
+                <Spacings.Inline scale="s">
+                  <SecondaryButton
+                    label="Client Credentials"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleChange("authType", "client_credentials");
+                    }}
+                    isDisabled={credentialStatus === "validating"}
+                    tone={
+                      formData.authType === "client_credentials"
+                        ? "primary"
+                        : "secondary"
+                    }
+                  />
+                  <SecondaryButton
+                    label="Access Token"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleChange("authType", "auth_token");
+                    }}
+                    isDisabled={credentialStatus === "validating"}
+                    tone={
+                      formData.authType === "auth_token"
+                        ? "primary"
+                        : "secondary"
+                    }
+                  />
+                </Spacings.Inline>
+              </Spacings.Stack>
 
               <TextInput
                 name="projectKey"
@@ -374,6 +412,38 @@ function App() {
                 onChange={(e) => handleChange("projectKey", e.target.value)}
                 isRequired
               />
+
+              {formData.authType === "client_credentials" ? (
+                <>
+                  <TextInput
+                    name="clientId"
+                    placeholder="Client ID"
+                    value={formData.clientId}
+                    onChange={(e) => handleChange("clientId", e.target.value)}
+                    isRequired
+                  />
+
+                  <TextInput
+                    name="clientSecret"
+                    placeholder="Client Secret"
+                    value={formData.clientSecret}
+                    onChange={(e) =>
+                      handleChange("clientSecret", e.target.value)
+                    }
+                    isRequired
+                    type="password"
+                  />
+                </>
+              ) : (
+                <TextInput
+                  name="accessToken"
+                  placeholder="Access Token"
+                  value={formData.accessToken}
+                  onChange={(e) => handleChange("accessToken", e.target.value)}
+                  isRequired
+                  type="password"
+                />
+              )}
 
               <TextInput
                 name="authUrl"
@@ -430,9 +500,11 @@ function App() {
                   }
                   isDisabled={
                     credentialStatus === "validating" ||
-                    !formData.clientId ||
-                    !formData.clientSecret ||
-                    !formData.projectKey
+                    !formData.projectKey ||
+                    (formData.authType === "client_credentials" &&
+                      (!formData.clientId || !formData.clientSecret)) ||
+                    (formData.authType === "auth_token" &&
+                      !formData.accessToken)
                   }
                   tone={credentialStatus === "invalid" ? "critical" : "primary"}
                 />
