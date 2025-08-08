@@ -51,15 +51,17 @@ const createPIIMiddleware = () => ({
 
     // Redact PII from generated text
     if (result.text) {
-      result.text = redactPII(result.text);
+      result.text = await redactPII(result.text);
     }
 
     // Redact PII from tool calls if present
     if (result.toolCalls) {
-      result.toolCalls = result.toolCalls.map((call) => ({
-        ...call,
-        input: redactPIIFromObject(call.input),
-      }));
+      result.toolCalls = await Promise.all(
+        result.toolCalls.map(async (call) => ({
+          ...call,
+          input: await redactPIIFromObject(call.input),
+        }))
+      );
     }
 
     return result;
@@ -81,36 +83,36 @@ const createPIIMiddleware = () => ({
               case "text-delta": {
                 yield {
                   ...chunk,
-                  delta: redactPII(chunk.delta),
+                  delta: await redactPII(chunk.delta),
                 };
                 break;
               }
               case "tool-call": {
                 yield {
                   ...chunk,
-                  input: redactPIIFromObject(chunk.input),
+                  input: await redactPIIFromObject(chunk.input),
                 };
                 break;
               }
               case "tool-call-delta": {
                 yield {
                   ...chunk,
-                  argsTextDelta: redactPII(chunk.argsTextDelta),
+                  argsTextDelta: await redactPII(chunk.argsTextDelta),
                 };
                 break;
               }
               case "text": {
                 yield {
                   ...chunk,
-                  text: redactPII(chunk.text),
+                  text: await redactPII(chunk.text),
                 };
                 break;
               }
               case "tool-result": {
                 yield {
                   ...chunk,
-                  input: redactPIIFromObject(chunk.input),
-                  output: redactPIIFromObject(chunk.output),
+                  input: await redactPIIFromObject(chunk.input),
+                  output: await redactPIIFromObject(chunk.output),
                 };
                 break;
               }
