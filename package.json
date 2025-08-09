@@ -9,7 +9,7 @@
     "server": "cd server && npm run dev",
     "client": "cd client && npm start",
     "build": "cd client && npm run build",
-    "install-all": "npm install && cd server && npm install && cd ../client && npm install --legacy-peer-deps",
+    "install-all": "npm install && cd server && npm install && cd ../client && npm install",
     "cleanup": "./cleanup-ports.sh",
     "stop": "./cleanup-ports.sh"
   },
@@ -24,10 +24,5 @@
   "license": "MIT",
   "devDependencies": {
     "concurrently": "^8.2.2"
-  },
-  "dependencies": {
-    "@ai-sdk/google": "^2.0.3",
-    "@commercetools/agent-essentials": "^1.0.0",
-    "ai": "^5.0.8"
   }
 }
